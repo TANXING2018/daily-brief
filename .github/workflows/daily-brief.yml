@@ -24,5 +24,7 @@ jobs:
         env:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_PASS: ${{ secrets.MAIL_PASS }}
           ZHIPU_MODEL: ${{ vars.ZHIPU_MODEL }}  # 可选；不设则脚本用默认 glm-4-flash
         run: python daily_brief.py

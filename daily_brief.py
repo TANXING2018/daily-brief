@@ -245,6 +245,26 @@ def push_wechat(brief: str) -> None:
     print(f"已推送微信：{r.json().get('code')} {r.json().get('message', '')}")
 
 
+def push_mail(brief: str) -> None:
+    """QQ 邮箱 SMTP 推送（MAil_USER/MAIL_PASS 来自 Actions Secrets）。"""
+    import smtplib
+    from email.mime.text import MIMEText
+
+    user = os.environ.get("MAIL_USER", "")
+    pwd = os.environ.get("MAIL_PASS", "")
+    to = os.environ.get("MAIL_TO", user)
+    title = re.search(r"^\*\*一句话头条\*\*：(.+)", brief, re.M)
+    subject = f"📡 {title.group(1).strip()[:60]}" if title else f"📡 个人头条 · {NOW:%Y-%m-%d}"
+    msg = MIMEText(brief, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = user
+    msg["To"] = to
+    with smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=30) as s:
+        s.login(user, pwd)
+        s.sendmail(user, [to], msg.as_string())
+    print(f"已推送邮件至 {to}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="不调模型不推送，打印提示词")
@@ -265,10 +285,21 @@ def main() -> int:
 
     print(brief)  # Actions 日志里留全文，推送失败时手机 GitHub App 可查
     if not args.dry_run:
-        if not SERVERCHAN_KEY:
-            print("⚠ 未配置 SERVERCHAN_KEY，跳过推送", file=sys.stderr)
-        else:
-            push_wechat(brief)
+        pushed = False
+        if SERVERCHAN_KEY:
+            try:
+                push_wechat(brief)
+                pushed = True
+            except Exception as e:
+                print(f"⚠ 微信推送失败：{type(e).__name__} {str(e)[:100]}", file=sys.stderr)
+        if os.environ.get("MAIL_USER") and os.environ.get("MAIL_PASS"):
+            try:
+                push_mail(brief)
+                pushed = True
+            except Exception as e:
+                print(f"⚠ 邮件推送失败：{type(e).__name__} {str(e)[:100]}", file=sys.stderr)
+        if not pushed:
+            print("⚠ 未配置任何推送渠道（SERVERCHAN_KEY 或 MAIL_USER/MAIL_PASS），仅打印", file=sys.stderr)
     return 0
 
 
