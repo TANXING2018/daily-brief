@@ -23,6 +23,10 @@ jobs:
       - name: 生成并推送晨报
         env:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          WEIXIN_APPID: ${{ secrets.WEIXIN_APPID }}
+          WEIXIN_SECRET: ${{ secrets.WEIXIN_SECRET }}
+          WEIXIN_OPENID: ${{ secrets.WEIXIN_OPENID }}
+          WEIXIN_TEMPLATE_ID: ${{ secrets.WEIXIN_TEMPLATE_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_PASS: ${{ secrets.MAIL_PASS }}

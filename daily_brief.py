@@ -265,6 +265,51 @@ def push_mail(brief: str) -> None:
     print(f"已推送邮件至 {to}")
 
 
+def push_weixin_test(brief: str) -> None:
+    """微信公众平台测试号模板消息（个人微信收到的服务号通知，精简版）。"""
+    appid = os.environ["WEIXIN_APPID"]
+    secret = os.environ["WEIXIN_SECRET"]
+    openid = os.environ["WEIXIN_OPENID"]
+    tpl = os.environ["WEIXIN_TEMPLATE_ID"]
+
+    r = requests.get(
+        "https://api.weixin.qq.com/cgi-bin/token",
+        params={"grant_type": "client_credential", "appid": appid, "secret": secret},
+        timeout=30,
+    )
+    r.raise_for_status()
+    token = r.json().get("access_token")
+    if not token:
+        raise RuntimeError(f"取 access_token 失败：{r.text[:120]}")
+
+    def plain(md: str) -> str:
+        s = re.sub(r"\*\*|##|^\s*[-*]\s*", "", md, flags=re.M).strip()
+        return re.sub(r"\n{3,}", "\n\n", s)
+
+    m = re.search(r"^\*\*一句话头条\*\*：(.+)", brief, re.M)
+    headline = plain(m.group(1)) if m else f"个人头条 {NOW:%Y-%m-%d}"
+    # 次条+路标做正文；模板消息字段有限长，超出的部分看邮箱/日志
+    body_part = brief.split("**次条**", 1)[-1]
+    content = plain(("**次条**" if body_part != brief else "") + body_part)[:900]
+
+    r2 = requests.post(
+        f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={token}",
+        json={
+            "touser": openid,
+            "template_id": tpl,
+            "data": {
+                "title": {"value": f"📡 {headline[:60]}", "color": "#17325C"},
+                "content": {"value": content or "今日无增量", "color": "#444444"},
+            },
+        },
+        timeout=30,
+    )
+    r2.raise_for_status()
+    if r2.json().get("errcode") != 0:
+        raise RuntimeError(f"模板消息发送失败：{r2.text[:200]}")
+    print("已推送微信（测试号模板消息）")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="不调模型不推送，打印提示词")
@@ -286,6 +331,12 @@ def main() -> int:
     print(brief)  # Actions 日志里留全文，推送失败时手机 GitHub App 可查
     if not args.dry_run:
         pushed = False
+        if all(os.environ.get(k) for k in ("WEIXIN_APPID", "WEIXIN_SECRET", "WEIXIN_OPENID", "WEIXIN_TEMPLATE_ID")):
+            try:
+                push_weixin_test(brief)
+                pushed = True
+            except Exception as e:
+                print(f"⚠ 微信测试号推送失败：{type(e).__name__} {str(e)[:100]}", file=sys.stderr)
         if SERVERCHAN_KEY:
             try:
                 push_wechat(brief)
@@ -299,7 +350,7 @@ def main() -> int:
             except Exception as e:
                 print(f"⚠ 邮件推送失败：{type(e).__name__} {str(e)[:100]}", file=sys.stderr)
         if not pushed:
-            print("⚠ 未配置任何推送渠道（SERVERCHAN_KEY 或 MAIL_USER/MAIL_PASS），仅打印", file=sys.stderr)
+            print("⚠ 未配置任何推送渠道（WEIXIN_* / SERVERCHAN_KEY / MAIL_*），仅打印", file=sys.stderr)
     return 0
 
 
