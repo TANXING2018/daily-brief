@@ -117,17 +117,17 @@ export default {
     }
 
     const xml = await request.text();
+    // 无条件登记：任何 POST 到达都记录原始体（诊断微信是否推送 + 格式差异）
+    await env.FBK.put(
+      "diag:last",
+      `${new Date().toISOString()} RAW[${xml.slice(0, 100).replace(/\n/g, " ")}]`,
+    );
     const msg = {
       FromUserName: XML_FIELD(xml, "FromUserName"),
       Content: XML_FIELD(xml, "Content"),
       MsgId: XML_FIELD(xml, "MsgId"),
     };
     if (!msg.FromUserName) return new Response("success");
-    // 来访登记（诊断用：证明消息到达）
-    await env.FBK.put(
-      "diag:last",
-      `${new Date().toISOString()} from=${msg.FromUserName.slice(0, 8)}… text=${(msg.Content || "").slice(0, 30)}`,
-    );
     // 同步处理（微信 5 秒窗口内完成，实测 2-3 秒）；错误直接回在响应里便于诊断
     try {
       const seen = "msgid:" + msg.MsgId;
