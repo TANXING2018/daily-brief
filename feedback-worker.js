@@ -106,8 +106,9 @@ export default {
     if (url.pathname !== "/wx") return new Response("not found", { status: 404 });
 
     if (request.method === "GET") {
-      // 微信服务器验证（标准实现：字典序 sha1 比对）
+      // 微信服务器验证（标准实现：字典序 sha1 比对）；记录验证探针到达（诊断）
       const q = url.searchParams;
+      await env.FBK.put("diag:get", `${new Date().toISOString()} 验证请求到达`);
       const sig = await sha1Hex([env.WX_TOKEN, q.get("timestamp"), q.get("nonce")].sort().join(""));
       return sig === q.get("signature")
         ? new Response(q.get("echostr"))
