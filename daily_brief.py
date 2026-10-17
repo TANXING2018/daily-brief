@@ -301,6 +301,39 @@ def push_weixin_test(brief: str) -> None:
         s = re.sub(r"\*\*|##|^\s*[-*]\s*", "", md, flags=re.M).strip()
         return re.sub(r"\n{3,}", "\n\n", s)
 
+    def chat_format(md: str) -> str:
+        """晨报 markdown → 微信聊天窗友好排版：分隔线/📌头条/①次条/🎯路标块。"""
+        circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+        out, section, sub_n = [], "head", 0
+        for raw in md.splitlines():
+            s = raw.strip()
+            if not s:
+                continue
+            clean = s.replace("**", "")
+            if clean.startswith("## "):
+                out += [clean[3:].strip(), "━" * 16, ""]
+            elif clean.startswith("一句话头条"):
+                head = clean.split("：", 1)[-1] if "：" in clean else clean.split(":", 1)[-1]
+                out += [f"📌 {head.strip()}", ""]
+                section = "sub_head"
+            elif clean.startswith("次条"):
+                section = "sub"
+            elif clean.startswith("路标对照"):
+                out += ["", "🎯 路标对照"]
+                section = "landmark"
+            elif s[:2] in ("- ", "· ", "* "):
+                body = s.lstrip("-·* ").strip()
+                if section == "sub":
+                    out.append(f"{circled[min(sub_n, 19)]} {body}")
+                    sub_n += 1
+                else:
+                    out.append(f"· {body}")
+            elif section in ("sub", "landmark", "sub_head"):
+                out.append(clean)  # 段内续行
+            else:
+                out.append(clean)
+        return "\n".join(out).strip()
+
     def wx_post(url: str, payload: dict) -> dict:
         # 微信接口对 \uXXXX 转义 JSON 有渲染 bug（2026-10 实测显示为 u3010 码），
         # 必须用原始 UTF-8 汉字 body 直传
@@ -310,7 +343,7 @@ def push_weixin_test(brief: str) -> None:
         return r.json()
 
     # 主通道：客服文本消息（上限 2048 字节，中文约 680 字）
-    text = plain(brief)
+    text = chat_format(brief)
     if len(text.encode("utf-8")) > 2000:
         text = text[:660] + "\n…（超长截断，全文见 GitHub 仓库 Actions 日志）"
     j1 = wx_post(
