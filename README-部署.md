@@ -80,6 +80,53 @@
   Secrets and variables → **Variables** → New variable：Name=`ZHIPU_MODEL`，
   Value=模型名（收费档按 token 计费，晨报一天一次费用极小）。
 
+## 七、反馈通道（2026-10-18 加：微信回复「增加/减少」→ 编号 → 调权重）
+
+机制：成熟部件组装——微信回调用 Cloudflare Worker（架构参照
+wechat-official-account-mcp-private），交互状态机用 ConversationHandler 三段式模式。
+`feedback-worker.js` 部署在 Cloudflare（免费档），收到微信回复后写入 GitHub 仓库的
+「晨报反馈」issue；晨报脚本每天推送时同时写编号映射（BRIEF|日期|1=标题…）、
+运行时读取近期反馈（FEEDBACK/NOTE）作为打分调整依据带进模型。
+
+**你微信里的用法**：回复「增加」→ 再回复编号（如 3）= 当天第 3 条的同类内容权重上调；
+「减少」同理；「取消」退出模式；直接发文字 = 自由备注。
+
+### 部署步骤（一次性，约 15 分钟）
+
+1. **建反馈 issue**：GitHub 仓库 → Issues → New issue → 标题填 `晨报反馈` → 提交。
+   记下编号（地址栏 issues/ 后面的数字，一般是 1）。
+2. **注册 Cloudflare**：[dash.cloudflare.com](https://dash.cloudflare.com)（邮箱，免费）。
+3. **建 KV**：左侧 Storage & Databases → KV → Create namespace，名字随意（如 `fbk`）。
+4. **建 Worker**：左侧 Compute (Workers) → Create → Create Worker → 名字随意
+   （如 `feedback`）→ Deploy → 进 Edit code → 把本地 `tools/cloud/feedback-worker.js`
+   全文粘贴进去 → Deploy。
+5. **绑 KV**：Worker 页 → Settings → Bindings → Add → KV Namespace →
+   Variable name 填 `FBK`（必须一字不差），选中第 3 步建的 namespace。
+6. **填变量**：Worker → Settings → Variables and Secrets → Add（Type 选 Secret）：
+
+   | 变量名 | 值 |
+   |---|---|
+   | `WX_TOKEN` | 自造一串（如 `fz2026abc`），等会儿测试号也填同一个 |
+   | `WX_APPID` / `WX_SECRET` | 测试号的 appID / appSecret |
+   | `GH_REPO` | `TANXING2018/daily-brief` |
+   | `GH_ISSUE` | 第 1 步的 issue 编号 |
+   | `GH_PAT` | 下一步生成的 GitHub 令牌 |
+
+7. **GitHub 令牌**：GitHub → 头像 → Settings → Developer settings →
+   Fine-grained tokens → Generate new token：Repository access 选
+   **Only select repositories → daily-brief**；Permissions → Issues →
+   **Read and write**；生成后复制，填进上表 `GH_PAT`。
+8. **接通微信**：复制 Worker 的网址（形如 `https://feedback.xxx.workers.dev`）。
+   打开微信测试号管理页 → 「接口配置信息」→ 修改：
+   - URL：`https://feedback.xxx.workers.dev/wx`（注意末尾加 `/wx`）
+   - Token：第 6 步的 `WX_TOKEN` 值
+   - 提交（微信立刻发验证请求，Worker 必须已部署）
+9. **测试**：微信里给测试号发「增加」→ 应秒回模式提示 → 发「3」→
+   回「已记录」→ 到 GitHub 仓库 Issues 里看「晨报反馈」出现
+   `FEEDBACK|日期|up|3` 即全通。
+
+晨报脚本端（读反馈+写映射）已内置，无需配置——GitHub Actions 的运行时令牌自动生效。
+
 ## 六、与本地版（ZCode 定时晨报）的关系
 
 两套并存不冲突：云端版保证关机也有推送；本地版（每天 8:30 的 ZCode 自动化）

@@ -9,6 +9,8 @@ jobs:
   brief:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      issues: write        # 反馈闭环：写编号映射 + 读用户反馈
     steps:
       - uses: actions/checkout@v4
 
@@ -30,5 +32,6 @@ jobs:
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_PASS: ${{ secrets.MAIL_PASS }}
-          ZHIPU_MODEL: ${{ vars.ZHIPU_MODEL }}  # 可选；不设则脚本用默认 glm-4-flash
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 反馈 issue 读写（运行时自动生成）
+          ZHIPU_MODEL: ${{ vars.ZHIPU_MODEL }}  # 可选；不设则脚本用默认
         run: python daily_brief.py

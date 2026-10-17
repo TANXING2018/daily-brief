@@ -190,7 +190,7 @@ def gauges() -> str:
     return "\n".join(lines)
 
 
-def build_prompt(ranked: list[Item], gauge_text: str) -> str:
+def build_prompt(ranked: list[Item], gauge_text: str, feedback_hints: str = "") -> str:
     profile = open(PROFILE_PATH, encoding="utf-8").read()
     listing = []
     for it in ranked:
@@ -206,7 +206,7 @@ def build_prompt(ranked: list[Item], gauge_text: str) -> str:
 # 路标仪表（工具实测，行情数字以这里为准、快讯口径须标注）
 
 {gauge_text}
-
+{(chr(10) + feedback_hints + chr(10)) if feedback_hints else ''}
 # 任务
 
 今天是 {NOW:%Y-%m-%d}。按画像第一节的打分制处理：对清单逐条打「画像匹配/重要性/增量性」
@@ -250,6 +250,86 @@ def llm_brief(prompt: str) -> str:
                     break
                 time.sleep(10)
     raise RuntimeError(f"所有模型候选均失败，最后错误：{last_err}")
+
+
+# ---------------------------------------------------------------- 反馈闭环（用户 2026-10-18 定：
+# 微信回复「增加/减少」→ 编号 → feedback-worker.js 存 issue；晨报读取近期反馈调打分）
+GH_TOKEN = os.environ.get("GH_FEEDBACK_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+GH_REPO = "TANXING2018/daily-brief"
+
+
+def _gh(method: str, path: str, token: str, json_body=None) -> requests.Response:
+    return requests.request(method, f"https://api.github.com{path}",
+                            headers={"Authorization": f"Bearer {token}",
+                                     "Accept": "application/vnd.github+json"},
+                            json=json_body, timeout=30)
+
+
+def feedback_issue(token: str) -> int:
+    """找「晨报反馈」issue，没有则建。返回 issue 号。"""
+    r = _gh("GET", f"/repos/{GH_REPO}/issues?state=open&per_page=50", token)
+    for it in r.json():
+        if it.get("title") == "晨报反馈":
+            return it["number"]
+    r2 = _gh("POST", f"/repos/{GH_REPO}/issues", token,
+             {"title": "晨报反馈", "body": "反馈通道：Worker 写入 FEEDBACK/NOTE，晨报脚本写 BRIEF 编号映射。勿删。"})
+    r2.raise_for_status()
+    return r2.json()["number"]
+
+
+def post_brief_map(brief: str, token: str) -> None:
+    """推送成功后把当日编号→标题映射写进反馈 issue（供编号反馈定位新闻）。"""
+    try:
+        n = feedback_issue(token)
+        entries = []
+        m = re.search(r"^\*\*一句话头条\*\*：(.+)", brief, re.M)
+        if m:
+            entries.append(f"0={strip_src_lite(m.group(1))[:50]}")
+        sub = brief.split("**次条**", 1)[-1]
+        for i, line in enumerate(sub.splitlines()):
+            s = line.strip()
+            if s[:2] in ("- ", "· ", "* "):
+                entries.append(f"{len(entries)}={strip_src_lite(s.lstrip('-·* '))[:50]}")
+        _gh("POST", f"/repos/{GH_REPO}/issues/{n}/comments", token,
+            {"body": f"BRIEF|{NOW:%Y-%m-%d}|" + "|".join(entries)})
+        print(f"已写当日编号映射到 issue #{n}")
+    except Exception as e:
+        print(f"⚠ 编号映射写入失败（不影响晨报）：{type(e).__name__} {str(e)[:80]}", file=sys.stderr)
+
+
+def strip_src_lite(t: str) -> str:
+    return re.sub(r"（[^（）]*(?:\d{1,2}-\d{1,2}|\d{1,2}:\d{2})[^（）]*）", "", t).strip()
+
+
+def fetch_feedback_hints(token: str) -> str:
+    """读反馈 issue：最近 BRIEF 映射 + 其后的 FEEDBACK/NOTE → 打分调整提示。"""
+    try:
+        n = feedback_issue(token)
+        r = _gh("GET", f"/repos/{GH_REPO}/issues/{n}/comments?per_page=100", token)
+        comments = [c["body"] for c in r.json()]
+        brief_map = None
+        for c in comments:
+            if c.startswith("BRIEF|"):
+                brief_map = c  # 取最新一条
+        feedbacks = [c for c in comments if c.startswith(("FEEDBACK|", "NOTE|"))]
+        if not feedbacks:
+            return ""
+        heads = dict(kv.split("=", 1) for kv in brief_map.split("|")[2:] if "=" in kv) if brief_map else {}
+        lines = []
+        for f in feedbacks[-8:]:  # 只取最近 8 条，避免 prompt 膨胀
+            parts = f.split("|")
+            if parts[0] == "FEEDBACK" and len(parts) >= 4:
+                title = heads.get(parts[3], "（当日条目）")
+                lines.append(f"- {parts[1]} 用户对「{title}」点了{parts[2] == 'up' and '增加' or '减少'}")
+            elif parts[0] == "NOTE" and len(parts) >= 3:
+                lines.append(f"- {parts[1]} 用户备注：「{parts[2][:60]}」")
+        if not lines:
+            return ""
+        return ("# 近期用户反馈（打分调整依据：将反馈条目归纳为其主题/同类，"
+                "后续同类新闻的画像匹配分相应上调或下调）\n" + "\n".join(lines))
+    except Exception as e:
+        print(f"⚠ 反馈读取失败（不影响晨报）：{type(e).__name__} {str(e)[:80]}", file=sys.stderr)
+        return ""
 
 
 def push_wechat(brief: str) -> None:
@@ -399,7 +479,7 @@ def main() -> int:
     if not ranked:
         brief = f"## 📡 个人头条 · {NOW:%Y-%m-%d}\n\n今日三个快讯源均未取到数据（源不可用）。"
     else:
-        prompt = build_prompt(ranked, gauges())
+        prompt = build_prompt(ranked, gauges(), fetch_feedback_hints(GH_TOKEN) if GH_TOKEN else "")
         if args.dry_run or not ZHIPU_API_KEY:
             print("=== DRY RUN：以下为将发给模型的提示词 ===\n")
             print(prompt)
@@ -442,6 +522,8 @@ def main() -> int:
                 print(f"⚠ 邮件推送失败：{type(e).__name__} {str(e)[:100]}", file=sys.stderr)
         if not pushed:
             print("⚠ 未配置任何推送渠道（WEIXIN_* / SERVERCHAN_KEY / MAIL_*），仅打印", file=sys.stderr)
+        if pushed and GH_TOKEN:
+            post_brief_map(brief, GH_TOKEN)
     return 0
 
 
