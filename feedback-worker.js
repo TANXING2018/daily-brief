@@ -97,6 +97,12 @@ async function handle(msg, env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === "/wx-diag") {
+      // 诊断端点：返回最近一次到达的消息记录（用 WX_TOKEN 防止外人查看）
+      if (url.searchParams.get("k") !== env.WX_TOKEN) return new Response("no", { status: 403 });
+      const last = (await env.FBK.get("diag:last")) || "无任何消息到达过";
+      return new Response(last);
+    }
     if (url.pathname !== "/wx") return new Response("not found", { status: 404 });
 
     if (request.method === "GET") {
@@ -115,6 +121,11 @@ export default {
       MsgId: XML_FIELD(xml, "MsgId"),
     };
     if (!msg.FromUserName) return new Response("success");
+    // 来访登记（诊断用：证明消息到达）
+    await env.FBK.put(
+      "diag:last",
+      `${new Date().toISOString()} from=${msg.FromUserName.slice(0, 8)}… text=${(msg.Content || "").slice(0, 30)}`,
+    );
     // 同步处理（微信 5 秒窗口内完成，实测 2-3 秒）；错误直接回在响应里便于诊断
     try {
       const seen = "msgid:" + msg.MsgId;
