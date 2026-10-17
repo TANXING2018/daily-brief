@@ -321,7 +321,9 @@ def push_weixin_test(brief: str) -> None:
     r2.raise_for_status()
     if r2.json().get("errcode") != 0:
         raise RuntimeError(f"模板消息发送失败：{r2.text[:200]}")
-    print("已推送微信（测试号模板消息）")
+    print(f"已推送微信（测试号模板消息）msgid={r2.json().get('msgid')}")
+    print(f"ℹ 发送字段 title.value 前80字：{headline[:80]}")
+    print(f"ℹ 发送字段 content.value 长度={len(content or '')}，前80字：{(content or '')[:80]}")
 
 
 def main() -> int:
