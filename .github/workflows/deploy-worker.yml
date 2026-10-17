@@ -1,0 +1,21 @@
+name: deploy-worker
+
+on:
+  push:
+    branches: [main]
+    paths: ['feedback-worker.js', 'wrangler.toml']
+  workflow_dispatch: {}   # 支持手动触发
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # 官方部署通道：wrangler-action。首次部署（Worker 已由网页手动创建）时
+      # 同名直接覆盖更新；CLOUDFLARE_API_TOKEN 见仓库 Secrets（Fine-grained，
+      # 权限 Account→Workers Scripts→Edit + User→Workers KV Storage→Edit）。
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
