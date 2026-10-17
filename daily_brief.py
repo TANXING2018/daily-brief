@@ -280,11 +280,12 @@ def push_mail(brief: str) -> None:
 
 
 def push_weixin_test(brief: str) -> None:
-    """微信公众平台测试号模板消息（个人微信收到的服务号通知，精简版）。"""
+    """微信测试号推送。主通道=客服消息（普通聊天气泡，全文可读）；
+    若被 48h 互动窗口拦截（45015），降级模板消息卡片并带 url 跳转全文。"""
     appid = os.environ["WEIXIN_APPID"]
     secret = os.environ["WEIXIN_SECRET"]
     openid = os.environ["WEIXIN_OPENID"]
-    tpl = os.environ["WEIXIN_TEMPLATE_ID"]
+    tpl = os.environ.get("WEIXIN_TEMPLATE_ID", "")
 
     r = requests.get(
         "https://api.weixin.qq.com/cgi-bin/token",
@@ -300,30 +301,46 @@ def push_weixin_test(brief: str) -> None:
         s = re.sub(r"\*\*|##|^\s*[-*]\s*", "", md, flags=re.M).strip()
         return re.sub(r"\n{3,}", "\n\n", s)
 
+    # 主通道：客服文本消息（上限 2048 字节，中文约 680 字）
+    text = plain(brief)
+    if len(text.encode("utf-8")) > 2000:
+        text = text[:660] + "\n…（超长截断，全文见 GitHub 仓库 Actions 日志）"
+    r1 = requests.post(
+        f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={token}",
+        json={"touser": openid, "msgtype": "text", "text": {"content": text}},
+        timeout=30,
+    )
+    r1.raise_for_status()
+    j1 = r1.json()
+    if j1.get("errcode") == 0:
+        print(f"已推送微信（客服消息，{len(text.encode('utf-8'))} 字节）")
+        return
+    print(f"⚠ 客服消息失败 errcode={j1.get('errcode')} {j1.get('errmsg','')[:80]}，尝试模板消息兜底", file=sys.stderr)
+
+    # 降级：模板消息卡片（正文会被折叠，url 跳转 GitHub Actions 全文）
+    if not tpl:
+        raise RuntimeError("客服消息失败且未配 WEIXIN_TEMPLATE_ID")
     m = re.search(r"^\*\*一句话头条\*\*：(.+)", brief, re.M)
     headline = plain(m.group(1)) if m else f"个人头条 {NOW:%Y-%m-%d}"
-    # 次条+路标做正文；模板消息字段有限长，超出的部分看邮箱/日志
     body_part = brief.split("**次条**", 1)[-1]
-    content = plain(("**次条**" if body_part != brief else "") + body_part)[:900]
-
+    content = plain(("**次条**" if body_part != brief else "") + body_part)[:400]
     r2 = requests.post(
         f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={token}",
         json={
             "touser": openid,
             "template_id": tpl,
+            "url": "https://github.com/TANXING2018/daily-brief/actions",
             "data": {
-                "title": {"value": f"📡 {headline[:60]}", "color": "#17325C"},
-                "content": {"value": content or "今日无增量", "color": "#444444"},
+                "title": {"value": f"📡 {headline[:60]}"},
+                "content": {"value": content or "今日无增量（点击查看全文）"},
             },
         },
         timeout=30,
     )
     r2.raise_for_status()
     if r2.json().get("errcode") != 0:
-        raise RuntimeError(f"模板消息发送失败：{r2.text[:200]}")
-    print(f"已推送微信（测试号模板消息）msgid={r2.json().get('msgid')}")
-    print(f"ℹ 发送字段 title.value 前80字：{headline[:80]}")
-    print(f"ℹ 发送字段 content.value 长度={len(content or '')}，前80字：{(content or '')[:80]}")
+        raise RuntimeError(f"模板消息兜底也失败：{r2.text[:200]}")
+    print("已推送微信（模板消息卡片+链接兜底）")
 
 
 def main() -> int:
