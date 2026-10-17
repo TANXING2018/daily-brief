@@ -227,7 +227,11 @@ def llm_brief(prompt: str) -> str:
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            print(f"⚠ LLM 调用第 {attempt} 次失败：{type(e).__name__} {str(e)[:120]}", file=sys.stderr)
+            body = ""
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                body = resp.text[:300].replace("\n", " ")
+            print(f"⚠ LLM 调用第 {attempt} 次失败：{type(e).__name__} {body}", file=sys.stderr)
             if attempt == 2:
                 raise
             time.sleep(10)
