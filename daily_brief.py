@@ -301,17 +301,22 @@ def push_weixin_test(brief: str) -> None:
         s = re.sub(r"\*\*|##|^\s*[-*]\s*", "", md, flags=re.M).strip()
         return re.sub(r"\n{3,}", "\n\n", s)
 
+    def wx_post(url: str, payload: dict) -> dict:
+        # 微信接口对 \uXXXX 转义 JSON 有渲染 bug（2026-10 实测显示为 u3010 码），
+        # 必须用原始 UTF-8 汉字 body 直传
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        r = requests.post(url, data=body, headers={"Content-Type": "application/json; charset=utf-8"}, timeout=30)
+        r.raise_for_status()
+        return r.json()
+
     # 主通道：客服文本消息（上限 2048 字节，中文约 680 字）
     text = plain(brief)
     if len(text.encode("utf-8")) > 2000:
         text = text[:660] + "\n…（超长截断，全文见 GitHub 仓库 Actions 日志）"
-    r1 = requests.post(
+    j1 = wx_post(
         f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={token}",
-        json={"touser": openid, "msgtype": "text", "text": {"content": text}},
-        timeout=30,
+        {"touser": openid, "msgtype": "text", "text": {"content": text}},
     )
-    r1.raise_for_status()
-    j1 = r1.json()
     if j1.get("errcode") == 0:
         print(f"已推送微信（客服消息，{len(text.encode('utf-8'))} 字节）")
         return
@@ -324,9 +329,9 @@ def push_weixin_test(brief: str) -> None:
     headline = plain(m.group(1)) if m else f"个人头条 {NOW:%Y-%m-%d}"
     body_part = brief.split("**次条**", 1)[-1]
     content = plain(("**次条**" if body_part != brief else "") + body_part)[:400]
-    r2 = requests.post(
+    j2 = wx_post(
         f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={token}",
-        json={
+        {
             "touser": openid,
             "template_id": tpl,
             "url": "https://github.com/TANXING2018/daily-brief/actions",
@@ -335,11 +340,9 @@ def push_weixin_test(brief: str) -> None:
                 "content": {"value": content or "今日无增量（点击查看全文）"},
             },
         },
-        timeout=30,
     )
-    r2.raise_for_status()
-    if r2.json().get("errcode") != 0:
-        raise RuntimeError(f"模板消息兜底也失败：{r2.text[:200]}")
+    if j2.get("errcode") != 0:
+        raise RuntimeError(f"模板消息兜底也失败：{j2}")
     print("已推送微信（模板消息卡片+链接兜底）")
 
 
