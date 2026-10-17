@@ -302,7 +302,11 @@ def push_weixin_test(brief: str) -> None:
         return re.sub(r"\n{3,}", "\n\n", s)
 
     def chat_format(md: str) -> str:
-        """晨报 markdown → 微信聊天窗友好排版：分隔线/📌头条/①次条/🎯路标块。"""
+        """晨报 markdown → 微信聊天窗友好排版：分隔线/📌头条/①次条/🎯路标块。
+        用户 2026-10-17 定：删来源+时点括注求简洁（观点/多源等性质标注保留）。"""
+        def strip_src(t: str) -> str:
+            return re.sub(r"（[^（）]*(?:\d{1,2}-\d{1,2}|\d{1,2}:\d{2})[^（）]*）", "", t).strip()
+
         circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
         out, section, sub_n = [], "head", 0
         for raw in md.splitlines():
@@ -314,7 +318,7 @@ def push_weixin_test(brief: str) -> None:
                 out += [clean[3:].strip(), "━" * 16, ""]
             elif clean.startswith("一句话头条"):
                 head = clean.split("：", 1)[-1] if "：" in clean else clean.split(":", 1)[-1]
-                out += [f"📌 {head.strip()}", ""]
+                out += [f"📌 {strip_src(head)}", ""]
                 section = "sub_head"
             elif clean.startswith("次条"):
                 section = "sub"
@@ -322,7 +326,7 @@ def push_weixin_test(brief: str) -> None:
                 out += ["", "🎯 路标对照"]
                 section = "landmark"
             elif s[:2] in ("- ", "· ", "* "):
-                body = s.lstrip("-·* ").strip()
+                body = strip_src(s.lstrip("-·* ").strip())
                 if section == "sub":
                     out.append(f"{circled[min(sub_n, 19)]} {body}")
                     sub_n += 1
