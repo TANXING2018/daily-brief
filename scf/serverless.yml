@@ -1,0 +1,47 @@
+# 腾讯云函数部署配置（Serverless Framework）
+# 部署：cd scf && npm i -g serverless && sls deploy
+# 密钥：环境变量 TENCENT_SECRET_ID / TENCENT_SECRET_KEY
+
+component: scf
+name: daily-brief-feedback
+org: daily-brief
+app: daily-brief
+stage: prod
+
+inputs:
+  src: ./
+  handler: index.main_handler
+  runtime: Nodejs16.13
+  memorySize: 256
+  timeout: 15
+  region: ap-guangzhou
+  description: 微信晨报反馈机器人（消息回调→KV状态→GitHub issue）
+  environment:
+    variables:
+      WX_TOKEN: fz2026radar
+      WX_APPID: wx279a10c5972aba69
+      WX_SECRET: ca327e5a70137631a57d20d535cb99a6
+      GH_REPO: TANXING2018/daily-brief
+      GH_ISSUE: "1"
+      GH_PAT: ${env:GH_PAT}
+      CF_ACCOUNT: ca74f1a198cb665cb9f6ec43d9445638
+      CF_KV_NS: 5f9739157f014da59d98ebe2d9c0c717
+      CF_TOKEN: ${env:CF_TOKEN}
+  events:
+    - apigw:
+        name: daily-brief-feedback-api
+        parameters:
+          protocols:
+            - https
+          serviceName: daily-brief-feedback
+          description: 微信消息回调入口
+          environment: release
+          endpoints:
+            - path: /wx
+              method: ANY
+              serviceScf:
+                isIntegratedResponse: false # 透传：函数返回体直接作为响应
+            - path: /wx-diag
+              method: GET
+              serviceScf:
+                isIntegratedResponse: false
