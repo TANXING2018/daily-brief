@@ -98,10 +98,11 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/wx-diag") {
-      // 诊断端点：返回最近一次到达的消息记录（用 WX_TOKEN 防止外人查看）
+      // 诊断端点：返回最近消息与最近验证探针（用 WX_TOKEN 防止外人查看）
       if (url.searchParams.get("k") !== env.WX_TOKEN) return new Response("no", { status: 403 });
-      const last = (await env.FBK.get("diag:last")) || "无任何消息到达过";
-      return new Response(last);
+      const last = (await env.FBK.get("diag:last")) || "消息：无任何到达";
+      const get = (await env.FBK.get("diag:get")) || "验证：无任何到达";
+      return new Response(get + "\n" + last);
     }
     if (url.pathname !== "/wx") return new Response("not found", { status: 404 });
 
