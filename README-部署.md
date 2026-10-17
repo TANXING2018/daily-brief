@@ -8,8 +8,14 @@
 在它的服务器上跑 `daily_brief.py`：抓三源快讯 → 关键词初筛 → 拉金价/美债仪表 →
 调智谱大模型按你的画像凝练 → Server酱推送到你微信。
 
-**费用**：全部 0 元。GitHub 私有仓库 Actions 每月 2000 免费分钟（本任务每天约 3-5 分钟）；
-智谱 `glm-4-flash` 为免费档模型（以 bigmodel.cn 价格页为准）；Server酱免费版每天 5 条（只需 1 条）。
+**费用**：全部 0 元。GitHub Public 仓库 Actions 无限免费分钟；智谱 flash 系模型免费档
+（2026-10 实况：`glm-4-flash` 已下线，脚本内置降级链 glm-4.7-flash→glm-4.5-flash→glm-4-flash-250414，
+平台改名/拥挤自动换挡）。
+
+> **2026-10-17 已部署完成**：仓库 `github.com/TANXING2018/daily-brief`（用户选 Public）。
+> 推送主通道=**微信公众平台测试号模板消息**（四把钥匙 WEIXIN_APPID/SECRET/OPENID/TEMPLATE_ID，
+> 测试号页面 mp.weixin.qq.com/debug/cgi-bin/sandbox）——首个晨报已验证送达微信。
+> Server酱因用户网络打不开 ftqq 域名弃用；QQ 邮箱通道代码保留未配（MAIL_USER/MAIL_PASS）。
 
 ---
 
