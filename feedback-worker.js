@@ -27,6 +27,7 @@ async function ghComment(env, body) {
         Authorization: `Bearer ${env.GH_PAT}`,
         Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
+        "User-Agent": "daily-brief-feedback-worker", // GitHub 硬性要求：无 UA 直接 403
       },
       body: JSON.stringify({ body }),
     },
