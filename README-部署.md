@@ -13,9 +13,12 @@
 平台改名/拥挤自动换挡）。
 
 > **2026-10-17 已部署完成**：仓库 `github.com/TANXING2018/daily-brief`（用户选 Public）。
-> 推送主通道=**微信公众平台测试号模板消息**（四把钥匙 WEIXIN_APPID/SECRET/OPENID/TEMPLATE_ID，
-> 测试号页面 mp.weixin.qq.com/debug/cgi-bin/sandbox）——首个晨报已验证送达微信。
-> Server酱因用户网络打不开 ftqq 域名弃用；QQ 邮箱通道代码保留未配（MAIL_USER/MAIL_PASS）。
+> 推送主通道=**微信测试号客服消息**（普通聊天气泡，晨报全文直读）。两个实测坑：
+> ①模板消息正文会被微信折叠不显示，弃用为兜底（带 url 跳 GitHub Actions 全文）；
+> ②**微信接口对 \uXXXX 转义 JSON 有渲染 bug（显示成 u3010 码），必须 ensure_ascii=False
+> 原始 UTF-8 body 直传**（daily_brief.py 的 wx_post 函数）。测试号四把钥匙
+> WEIXIN_APPID/SECRET/OPENID/TEMPLATE_ID 已配。Server酱（用户网络打不开 ftqq 域名）与
+> QQ 邮箱通道（MAIL_USER/MAIL_PASS）代码保留未启用。
 
 ---
 
