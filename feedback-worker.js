@@ -114,15 +114,15 @@ export default {
       MsgId: XML_FIELD(xml, "MsgId"),
     };
     if (!msg.FromUserName) return new Response("success");
-    // 微信要求 5 秒内响应：立即应答，处理放后台；失败仅记日志，靠微信重试补
-    ctx.waitUntil(
-      (async () => {
-        const seen = "msgid:" + msg.MsgId;
-        if (msg.MsgId && (await env.FBK.get(seen))) return; // msgid 排重（微信会重试 3 次）
-        if (msg.MsgId) await env.FBK.put(seen, "1", { expirationTtl: 3600 });
-        await handle(msg, env);
-      })().catch(e => console.error("handle:", e)),
-    );
-    return new Response("success");
+    // 同步处理（微信 5 秒窗口内完成，实测 2-3 秒）；错误直接回在响应里便于诊断
+    try {
+      const seen = "msgid:" + msg.MsgId;
+      if (msg.MsgId && (await env.FBK.get(seen))) return new Response("success"); // msgid 排重（微信会重试）
+      if (msg.MsgId) await env.FBK.put(seen, "1", { expirationTtl: 3600 });
+      await handle(msg, env);
+      return new Response("success");
+    } catch (e) {
+      return new Response("ERR:" + String((e && e.message) || e).slice(0, 300));
+    }
   },
 };
