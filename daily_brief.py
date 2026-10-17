@@ -31,6 +31,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PROFILE_PATH = os.path.join(HERE, "profile.md")
 
 # ---------------------------------------------------------------- 画像关键词（与本地 news_radar.py 同步）
+# 2026-10-18 机制改版：词表分数不再是硬门槛，只是「画像匹配」的参考信号与
+# LLM 失败时的降级排序（借鉴 TrendRadar 的回退设计）。黑名单只拦真垃圾，
+# 行情播报/产品新闻交给 LLM 的增量性维度自然压低。
+
 TIER1 = {
     "黄金", "金价", "央行购金",
     "意德利差", "BTP",
@@ -61,8 +65,6 @@ BLACKLIST = re.compile(
     r"|涨停板|连板|打板|妖股|龙虎榜|新股申购|中签|打新"
     r"|明星基金|基金经理|私募大佬"
     r"|回购股份|回购计划|增持计划|员工持股计划"
-    r"|持续走低|走势分化|跌幅扩大|涨幅扩大|盘前涨|盘前跌|开盘下跌|开盘上涨"
-    r"|王者荣耀|小米汽车|蔚来|理想汽车|小鹏"
 )
 
 
@@ -163,8 +165,7 @@ def fetch_and_rank(hours: float = 36.0, limit: int = 40) -> list[Item]:
         s_b, h_b = _hits(it.body)
         it.score = s_t * 2 + s_b
         it.hits = sorted(set(h_t + h_b))
-        if it.score >= 3:
-            ranked.append(it)
+        ranked.append(it)  # 无硬门槛：词表分仅作 LLM 失败时的降级排序
     ranked.sort(key=lambda x: (-x.score, -x.ts.timestamp()))
     return ranked[:limit]
 
@@ -194,11 +195,11 @@ def build_prompt(ranked: list[Item], gauge_text: str) -> str:
     listing = []
     for it in ranked:
         listing.append(f"[{it.score}分] {it.title}\n  {it.body[:180]}\n  ({it.ts:%m-%d %H:%M} · {it.source} · 命中:{'/'.join(it.hits[:6])})")
-    return f"""# 我的筛选画像（精选标准、路标表、输出格式——严格遵循）
+    return f"""# 我的筛选画像（打分制标准、路标表、输出格式——严格遵循）
 
 {profile}
 
-# 今日初筛清单（机械层输出，评分降序；跨源完全重复请合并为一条并标"多源"）
+# 今日候选清单（机械层宽召回，方括号内词表分仅是画像匹配的参考信号之一）
 
 {chr(10).join(listing)}
 
@@ -208,7 +209,11 @@ def build_prompt(ranked: list[Item], gauge_text: str) -> str:
 
 # 任务
 
-今天是 {NOW:%Y-%m-%d}。按画像第五节格式输出晨报：一句话头条（≤60字+来源时点括注）、次条 3-6 条每条一句话、路标对照。铁律：新闻=线索不是证据；观点级标"观点"且只进次条；快讯未覆盖且无数据的路标写"未观测到"；安静日明写"今日无增量，路标无触发"。只输出晨报本身，不要解释。"""
+今天是 {NOW:%Y-%m-%d}。按画像第一节的打分制处理：对清单逐条打「画像匹配/重要性/增量性」
+三维分，总分=画像×0.5+重要性×0.3+增量×0.2。取总分最高的做一句话头条（≤60字），
+次高 3-6 条做次条（每条一句话，按总分降序）。全部总分<4 就写"今日无增量，路标无触发"。
+铁律：新闻=线索不是证据；观点级标"观点"且不进头条；跨源完全重复合并为一条并标"多源"；
+快讯未覆盖且无数据的路标写"未观测到"。**不要输出分数本身**，只按画像第五节格式输出晨报。"""
 
 
 def llm_brief(prompt: str) -> str:
@@ -387,7 +392,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="不调模型不推送，打印提示词")
     ap.add_argument("--hours", type=float, default=36.0)
-    ap.add_argument("--limit", type=int, default=40)
+    ap.add_argument("--limit", type=int, default=60)
     args = ap.parse_args()
 
     ranked = fetch_and_rank(args.hours, args.limit)
@@ -399,7 +404,20 @@ def main() -> int:
             print("=== DRY RUN：以下为将发给模型的提示词 ===\n")
             print(prompt)
             return 0
-        brief = llm_brief(prompt)
+        try:
+            brief = llm_brief(prompt)
+        except Exception as e:
+            # 降级保障（借 TrendRadar 机制）：LLM 全挂时按词表分出机械版，推送不中断
+            print(f"⚠ LLM 全部候选失败，降级为机械版晨报：{e}", file=sys.stderr)
+            top = ranked[:5]
+            lines = [
+                f"## 📡 个人头条 · {NOW:%Y-%m-%d}", "",
+                "**一句话头条**：〔机械降级版〕" + top[0].title, "",
+                "**次条**：",
+            ]
+            lines += [f"- {it.title}（{it.source} {it.ts:%m-%d %H:%M}）" for it in top[1:]]
+            lines += ["", "**路标对照**：模型不可用，本版无仪表核对与凝练，详情见 GitHub Actions 日志"]
+            brief = "\n".join(lines)
 
     print(brief)  # Actions 日志里留全文，推送失败时手机 GitHub App 可查
     if not args.dry_run:
