@@ -24,7 +24,8 @@ NOW = datetime.utcnow() + timedelta(hours=8)
 
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 SERVERCHAN_KEY = os.environ.get("SERVERCHAN_KEY", "")
-ZHIPU_MODEL = os.environ.get("ZHIPU_MODEL", "glm-4-flash")
+# 免费模型档位随平台改名会失效（2026-10：glm-4-flash 已不存在），按序自动降级
+ZHIPU_MODELS = [m for m in [os.environ.get("ZHIPU_MODEL"), "glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"] if m]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROFILE_PATH = os.path.join(HERE, "profile.md")
@@ -213,28 +214,37 @@ def build_prompt(ranked: list[Item], gauge_text: str) -> str:
 def llm_brief(prompt: str) -> str:
     url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     headers = {"Authorization": f"Bearer {ZHIPU_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": ZHIPU_MODEL,
-        "temperature": 0.3,
-        "messages": [
-            {"role": "system", "content": "你是个人金融新闻编辑。你编的晨报只陈列线索与路标对照，绝不输出投资建议或收益承诺。"},
-            {"role": "user", "content": prompt},
-        ],
-    }
-    for attempt in (1, 2):
-        try:
-            r = requests.post(url, headers=headers, json=payload, timeout=180)
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            body = ""
-            resp = getattr(e, "response", None)
-            if resp is not None:
-                body = resp.text[:300].replace("\n", " ")
-            print(f"⚠ LLM 调用第 {attempt} 次失败：{type(e).__name__} {body}", file=sys.stderr)
-            if attempt == 2:
-                raise
-            time.sleep(10)
+    last_err = None
+    for model in ZHIPU_MODELS:
+        payload = {
+            "model": model,
+            "temperature": 0.3,
+            "messages": [
+                {"role": "system", "content": "你是个人金融新闻编辑。你编的晨报只陈列线索与路标对照，绝不输出投资建议或收益承诺。"},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        for attempt in (1, 2):
+            try:
+                r = requests.post(url, headers=headers, json=payload, timeout=180)
+                r.raise_for_status()
+                content = r.json()["choices"][0]["message"]["content"].strip()
+                if model != ZHIPU_MODELS[0]:
+                    print(f"ℹ 实际使用模型：{model}", file=sys.stderr)
+                return content
+            except Exception as e:
+                body = ""
+                resp = getattr(e, "response", None)
+                if resp is not None:
+                    body = resp.text[:300].replace("\n", " ")
+                last_err = f"{type(e).__name__} {body}"
+                print(f"⚠ LLM [{model}] 第 {attempt} 次失败：{last_err}", file=sys.stderr)
+                if resp is not None and '"code":"1211"' in body:
+                    break  # 模型不存在：换下一个候选，不重试
+                if attempt == 2:
+                    break
+                time.sleep(10)
+    raise RuntimeError(f"所有模型候选均失败，最后错误：{last_err}")
 
 
 def push_wechat(brief: str) -> None:
