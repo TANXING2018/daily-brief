@@ -74,6 +74,7 @@ class Item:
     body: str
     ts: datetime
     source: str
+    url: str = ""
     score: int = 0
     hits: list = None
 
