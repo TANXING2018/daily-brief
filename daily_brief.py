@@ -24,8 +24,14 @@ NOW = datetime.utcnow() + timedelta(hours=8)
 
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 SERVERCHAN_KEY = os.environ.get("SERVERCHAN_KEY", "")
-# 免费模型档位随平台改名会失效（2026-10：glm-4-flash 已不存在），按序自动降级
-ZHIPU_MODELS = [m for m in [os.environ.get("ZHIPU_MODEL"), "glm-5.3-flash", "glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"] if m]
+# 主模型=DeepSeek（按账号限流、无 IP 歧视，云服务器稳定）；智谱免费链仅作备胎
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+LLM_PROVIDERS = []
+if DEEPSEEK_API_KEY:
+    LLM_PROVIDERS.append(("https://api.deepseek.com/chat/completions", f"Bearer {DEEPSEEK_API_KEY}", ["deepseek-chat"]))
+if ZHIPU_API_KEY:
+    LLM_PROVIDERS.append(("https://open.bigmodel.cn/api/paas/v4/chat/completions", f"Bearer {ZHIPU_API_KEY}",
+                          [m for m in [os.environ.get("ZHIPU_MODEL"), "glm-5.3-flash", "glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"] if m]))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROFILE_PATH = os.path.join(HERE, "profile.md")
@@ -254,38 +260,39 @@ def build_prompt(ranked: list[Item], gauge_text: str, feedback_hints: str = "") 
 
 
 def llm_brief(prompt: str) -> str:
-    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-    headers = {"Authorization": f"Bearer {ZHIPU_API_KEY}", "Content-Type": "application/json"}
+    system_msg = "你是个人金融新闻编辑。你编的晨报只陈列线索与路标对照，绝不输出投资建议或收益承诺。"
     last_err = None
-    for model in ZHIPU_MODELS:
-        payload = {
-            "model": model,
-            "temperature": 0.3,
-            "messages": [
-                {"role": "system", "content": "你是个人金融新闻编辑。你编的晨报只陈列线索与路标对照，绝不输出投资建议或收益承诺。"},
-                {"role": "user", "content": prompt},
-            ],
-        }
-        for attempt in (1, 2):
-            try:
-                r = requests.post(url, headers=headers, json=payload, timeout=180)
-                r.raise_for_status()
-                content = r.json()["choices"][0]["message"]["content"].strip()
-                if model != ZHIPU_MODELS[0]:
-                    print(f"ℹ 实际使用模型：{model}", file=sys.stderr)
-                return content
-            except Exception as e:
-                body = ""
-                resp = getattr(e, "response", None)
-                if resp is not None:
-                    body = resp.text[:300].replace("\n", " ")
-                last_err = f"{type(e).__name__} {body}"
-                print(f"⚠ LLM [{model}] 第 {attempt} 次失败：{last_err}", file=sys.stderr)
-                if resp is not None and '"code":"1211"' in body:
-                    break  # 模型不存在：换下一个候选，不重试
-                if attempt == 2:
-                    break
-                time.sleep(10)
+    for url, auth, models in LLM_PROVIDERS:
+        for model in models:
+            payload = {
+                "model": model,
+                "temperature": 0.3,
+                "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt},
+                ],
+            }
+            for attempt in (1, 2):
+                try:
+                    r = requests.post(url, headers={"Authorization": auth, "Content-Type": "application/json",
+                                                    "User-Agent": "daily-brief"}, json=payload, timeout=180)
+                    r.raise_for_status()
+                    content = r.json()["choices"][0]["message"]["content"].strip()
+                    if len(LLM_PROVIDERS) > 1 or len(models) > 1:
+                        print(f"ℹ 使用模型：{model}", file=sys.stderr)
+                    return content
+                except Exception as e:
+                    body = ""
+                    resp = getattr(e, "response", None)
+                    if resp is not None:
+                        body = resp.text[:300].replace("\n", " ")
+                    last_err = f"{type(e).__name__} {body}"
+                    print(f"⚠ LLM [{model}] 第 {attempt} 次失败：{last_err}", file=sys.stderr)
+                    if resp is not None and ("1211" in body or '"code":"1305"' in body or '"code":"1302"' in body or "1314" in body):
+                        break  # 模型不可用/限流：换下一个模型，不重试
+                    if attempt == 2:
+                        break
+                    time.sleep(10)
     raise RuntimeError(f"所有模型候选均失败，最后错误：{last_err}")
 
 
