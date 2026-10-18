@@ -210,8 +210,9 @@ def build_prompt(ranked: list[Item], gauge_text: str, feedback_hints: str = "") 
 # 任务
 
 今天是 {NOW:%Y-%m-%d}。按画像第一节的打分制处理：对清单逐条打「画像匹配/重要性/增量性」
-三维分，总分=画像×0.5+重要性×0.3+增量×0.2。取总分最高的做一句话头条（≤60字），
-次高 3-6 条做次条（每条一句话，按总分降序）。全部总分<4 就写"今日无增量，路标无触发"。
+三维分，总分=画像×0.5+重要性×0.3+增量×0.2。取总分最高的做一句话头条（≤60字）；
+次条按总分降序**取尽所有合格条目（目标 5~15 条：新闻日多给、安静日少给甚至为零，
+宁缺毋滥）**，每条一句话。全部总分<4 就写"今日无增量，路标无触发"。
 铁律：新闻=线索不是证据；观点级标"观点"且不进头条；跨源完全重复合并为一条并标"多源"；
 **路标对照板块默认省略，仅当有路标触发（标⚠）或明显逼近阈值时才输出，且只列异常项**。
 **不要输出分数本身**，只按画像第五节格式输出晨报。"""
@@ -432,18 +433,34 @@ def push_weixin_test(brief: str) -> None:
         r.raise_for_status()
         return r.json()
 
-    # 主通道：客服文本消息（上限 2048 字节，中文约 680 字）
+    # 主通道：客服文本消息（单条上限 2048 字节≈680 汉字；5~15 条动态条数下超长自动拆条续发）
     text = chat_format(brief)
-    if len(text.encode("utf-8")) > 2000:
-        text = text[:660] + "\n…（超长截断，全文见 GitHub 仓库 Actions 日志）"
-    j1 = wx_post(
-        f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={token}",
-        {"touser": openid, "msgtype": "text", "text": {"content": text}},
-    )
-    if j1.get("errcode") == 0:
-        print(f"已推送微信（客服消息，{len(text.encode('utf-8'))} 字节）")
+    parts, buf = [], []
+    for line in text.split("\n"):
+        if sum(len(b.encode("utf-8")) for b in buf) + len(line.encode("utf-8")) > 900:
+            if buf:
+                parts.append("\n".join(buf))
+            buf = [line]
+        else:
+            buf.append(line)
+    if buf:
+        parts.append("\n".join(buf))
+    ok = True
+    for i, part in enumerate(parts, 1):
+        suffix = f"\n（{i}/{len(parts)}）" if len(parts) > 1 else ""
+        j1 = wx_post(
+            f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={token}",
+            {"touser": openid, "msgtype": "text", "text": {"content": part + suffix}},
+        )
+        if j1.get("errcode") != 0:
+            print(f"⚠ 客服消息第{i}条失败 errcode={j1.get('errcode')} {j1.get('errmsg','')[:80]}，尝试模板消息兜底", file=sys.stderr)
+            ok = False
+            break
+    if ok:
+        print(f"已推送微信（客服消息，{len(parts)} 段共 {sum(len(p.encode('utf-8')) for p in parts)} 字节）")
         return
-    print(f"⚠ 客服消息失败 errcode={j1.get('errcode')} {j1.get('errmsg','')[:80]}，尝试模板消息兜底", file=sys.stderr)
+
+    # 降级：模板消息卡片（正文会被折叠，url 跳转 GitHub Actions 全文）
 
     # 降级：模板消息卡片（正文会被折叠，url 跳转 GitHub Actions 全文）
     if not tpl:
