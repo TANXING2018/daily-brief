@@ -14,6 +14,7 @@ const WX_SECRET = ENV.WX_SECRET;
 const GH_REPO = ENV.GH_REPO;
 const GH_ISSUE = ENV.GH_ISSUE;
 const GH_PAT = ENV.GH_PAT;
+const ZHIPU_KEY = ENV.ZHIPU_API_KEY;
 // Cloudflare KV（复用原 Worker 的存储，模式状态跨云共享）
 const CF_API = "https://api.cloudflare.com/client/v4";
 const CF_ACCOUNT = ENV.CF_ACCOUNT;
@@ -78,6 +79,24 @@ async function ghComment(body) {
 }
 
 async function wxReply(openid, text) {
+  // 超长拆条（微信单条 2048 字节；1900 分段线=合规内容单条发完，真超长才拆）
+  const parts = [];
+  let buf = [];
+  for (const line of text.split("\n")) {
+    if (buf.reduce((n, b) => n + Buffer.byteLength(b, "utf8"), 0) + Buffer.byteLength(line, "utf8") > 1900) {
+      if (buf.length) parts.push(buf.join("\n"));
+      buf = [line];
+    } else buf.push(line);
+  }
+  if (buf.length) parts.push(buf.join("\n"));
+  if (!parts.length) parts.push(text);
+  for (let i = 0; i < parts.length; i++) {
+    const suffix = parts.length > 1 ? `\n（${i + 1}/${parts.length}）` : "";
+    await wxReplyOne(openid, parts[i] + suffix);
+  }
+}
+
+async function wxReplyOne(openid, text) {
   let token = await kvGet("wx_token");
   if (!token) {
     const r = JSON.parse(
@@ -99,6 +118,51 @@ async function wxReply(openid, text) {
   if (j.errcode === 40001 || j.errcode === 42001) {
     await kvDel("wx_token"); // 失效则下次重取
   }
+}
+
+// ---- 智谱解读（「详情」功能：新闻全貌+AI分析，标注观点级）----
+async function zhipuExplain(newsText, headline) {
+  const body = JSON.stringify({
+    model: "glm-4.5-flash",
+    temperature: 0.4,
+    messages: [
+      { role: "system", content: "你是个人金融新闻编辑。解读只陈列事实与分析线索，绝不输出投资建议或收益承诺；判断部分必须标注为分析观点。" },
+      { role: "user", content: `用户是宏观/黄金/AI资本开支的个人研究者，关注：美国通胀与加息路径、长端利率、黄金定价、AI资本开支融资结构、欧美债务。请对下面这条晨报新闻做详细说明，输出三段（总长≤550汉字，语言通俗，术语用大白话解释）：\n①事件全貌（时间/主体/关键数字）\n②背景（为什么重要，尽量挂到上述用户关注的主线）\n③分析与观察点（开头标注「分析·观点」：可能的影响、后续该盯什么）\n\n晨报条目标题：${headline}\n原始新闻全文：\n${newsText}` },
+    ],
+  });
+  const r = await req("POST", "https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+    headers: { Authorization: `Bearer ${ZHIPU_KEY}`, "Content-Type": "application/json; charset=utf-8", "User-Agent": "daily-brief-scf" },
+    body,
+  });
+  if (r.status !== 200) throw new Error(`zhipu ${r.status}: ${r.text.slice(0, 150)}`);
+  const j = JSON.parse(r.text);
+  const content = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+  if (!content) throw new Error("zhipu 空回复: " + r.text.slice(0, 120));
+  return content.trim();
+}
+
+// 拉取当日 BRIEF-D（详情数据）第 idx 条
+async function fetchBriefDetail(idx) {
+  const r = await req(
+    "GET",
+    `https://api.github.com/repos/${GH_REPO}/issues/${GH_ISSUE}/comments?per_page=100`,
+    { headers: { Authorization: `Bearer ${GH_PAT}`, Accept: "application/vnd.github+json", "User-Agent": "daily-brief-scf" } },
+  );
+  if (r.status !== 200) throw new Error(`github ${r.status}`);
+  const comments = JSON.parse(r.text);
+  let latest = null;
+  for (const c of comments) if (typeof c.body === "string" && c.body.startsWith("BRIEF-D|")) latest = c.body;
+  if (!latest) return null;
+  const segs = latest.split("‖");
+  for (const seg of segs) {
+    const m = seg.match(new RegExp(`^${idx}=`));
+    if (m) return seg.slice(m[0].length);
+    if (seg.startsWith("BRIEF-D|")) {
+      const mm = seg.match(new RegExp(`^BRIEF-D\\|\\d{4}-\\d{2}-\\d{2}\\|${idx}=`));
+      if (mm) return seg.slice(mm[0].length);
+    }
+  }
+  return null;
 }
 
 // ---- 业务（与 Worker 版一致）----
@@ -126,6 +190,11 @@ async function handle(msg) {
     );
     return;
   }
+  if (text === "详情" || text === "详细") {
+    await kvPut("mode:" + who, "detail", 86400);
+    await say("已进入【详情】模式：回复晨报里的编号（如 2），我将给出该条新闻的完整信息与解读。发「取消」退出。");
+    return;
+  }
   if (text === "取消" || text === "退出") {
     await kvDel("mode:" + who);
     await say("已退出反馈模式 ✓");
@@ -134,10 +203,27 @@ async function handle(msg) {
   if (/^\d{1,2}$/.test(text)) {
     const mode = await kvGet("mode:" + who);
     if (!mode) {
-      await say("请先回复「增加」或「减少」进入反馈模式，再回复编号。");
+      await say("请先回复「增加」「减少」或「详情」进入对应模式，再回复编号。");
       return;
     }
     await kvDel("mode:" + who);
+    if (mode === "detail") {
+      try {
+        const detail = await fetchBriefDetail(text);
+        if (!detail) {
+          await say(`没找到今天晨报第 ${text} 条的存档（详情数据自 2026-10-18 起生成）。`);
+          return;
+        }
+        await say("正在解读，约需几秒…");
+        const headline = detail.split("\n")[0].slice(0, 50);
+        const explain = await zhipuExplain(detail, headline);
+        await say(`📄 第 ${text} 条 · ${headline}\n\n${explain}`);
+      } catch (e) {
+        console.error("detail:", e);
+        await say(`详情功能出错了：${String(e && e.message || e).slice(0, 120)}\n原始新闻：\n${(await fetchBriefDetail(text).catch(() => "") || "").slice(0, 500)}`);
+      }
+      return;
+    }
     await ghComment(`FEEDBACK|${today()}|${mode}|${text}`);
     await say(`已记录：今日晨报第 ${text} 条 权重${mode === "up" ? "↑上调" : "↓下调"}，明天生效 ✓`);
     return;

@@ -129,7 +129,8 @@ def fetch_and_rank(hours: float = 36.0, limit: int = 40) -> list[Item]:
             src_status.append(f"{name}源不可用({type(e).__name__})")
             continue
         if name == "东财":
-            add(df, "标题", "摘要", lambda r: _parse_ts(r["发布时间"]), "东财")
+            for _, r in df.iterrows():
+                items.append(Item(str(r["标题"]), str(r["摘要"]), _parse_ts(r["发布时间"]), "东财", str(r.get("链接") or "")))
         elif name == "财联社":
             rows = []
             for _, r in df.iterrows():
@@ -218,7 +219,10 @@ def build_prompt(ranked: list[Item], gauge_text: str, feedback_hints: str = "") 
 全部总分<4 就写"今日无增量，路标无触发"。
 铁律：新闻=线索不是证据；观点级标"观点"且不进头条；跨源完全重复合并为一条并标"多源"；
 **路标对照板块默认省略，仅当有路标触发（标⚠）或明显逼近阈值时才输出，且只列异常项**。
-**不要输出分数本身**，只按画像第五节格式输出晨报。"""
+**不要输出分数本身**，只按画像第五节格式输出晨报。**
+最后另起一行输出机器可读的溯源表（不展示给用户，用于"详情"功能回溯原始新闻）：
+`SRCLIST|1=c3,c7|2=c12|…` ——晨报每个编号对应候选清单的行号（c后面的数字，整合条目
+可对应多个），头条记为 0。此行必须输出。"""
 
 
 def llm_brief(prompt: str) -> str:
@@ -300,6 +304,63 @@ def post_brief_map(brief: str, token: str) -> None:
         print(f"已写当日编号映射到 issue #{n}")
     except Exception as e:
         print(f"⚠ 编号映射写入失败（不影响晨报）：{type(e).__name__} {str(e)[:80]}", file=sys.stderr)
+
+
+def post_brief_detail(ranked: list, token: str, brief: str = "") -> None:
+    """写当日"详情"数据（BRIEF-D）：晨报各编号对应的原始新闻全文（供「详情→编号」展开）。
+    首选 LLM 的 SRCLIST 溯源表；老模型不输出时兜底=按标题在候选里做包含匹配。"""
+    try:
+        entries = []
+        src = globals().get("_LAST_SRCLIST", "")
+        if src:
+            for pair in src.split("|"):
+                if "=" not in pair:
+                    continue
+                idx, refs = pair.split("=", 1)
+                fulls = []
+                for ref in refs.split(","):
+                    mm = re.match(r"c(\d+)", ref.strip())
+                    if not mm:
+                        continue
+                    ci = int(mm.group(1)) - 1
+                    if 0 <= ci < len(ranked):
+                        it = ranked[ci]
+                        link = f" {it.url}" if it.url else ""
+                        fulls.append(f"{it.title}\n{it.body[:400]}（{it.source} {it.ts:%m-%d %H:%M}）{link}")
+                if fulls:
+                    entries.append(f"{idx}=" + "\n---\n".join(fulls))
+        else:
+            # 兜底：拿晨报条目标题（来自 BRIEF 映射逻辑）在候选清单里找包含匹配
+            titles = []
+            m = re.search(r"^\*\*一句话头条\*\*：(.+)", brief, re.M)
+            if m:
+                titles.append((0, strip_src_lite(m.group(1))))
+            sub = brief.split("**次条**", 1)[-1]
+            for line in sub.splitlines():
+                s = line.strip()
+                if s[:2] in ("- ", "· ", "* "):
+                    titles.append((len(titles), strip_src_lite(s.lstrip("-·* "))))
+            for idx, title in titles:
+                key = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", title)[:15]
+                if len(key) < 6:
+                    continue
+                best = None
+                for it in ranked:
+                    hay = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", it.title + it.body)
+                    if key in hay and (best is None or len(it.body) > len(best.body)):
+                        best = it
+                if best is not None:
+                    link = f" {best.url}" if best.url else ""
+                    entries.append(f"{idx}={best.title}\n{best.body[:400]}（{best.source} {best.ts:%m-%d %H:%M}）{link}")
+        if entries:
+            n = feedback_issue(token)
+            body = f"BRIEF-D|{NOW:%Y-%m-%d}|" + "‖".join(entries)
+            _gh("POST", f"/repos/{GH_REPO}/issues/{n}/comments", token, {"body": body})
+            print(f"已写当日详情数据到 issue #{n}（{len(entries)} 条）")
+        else:
+            print("⚠ 详情数据为空（溯源表缺失且标题匹配无结果）", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠ 详情数据写入失败（不影响晨报）：{type(e).__name__} {str(e)[:80]}", file=sys.stderr)
 
 
 def strip_src_lite(t: str) -> str:
@@ -401,7 +462,7 @@ def push_weixin_test(brief: str) -> None:
         out, section, sub_n = [], "head", 0
         for raw in md.splitlines():
             s = raw.strip()
-            if not s:
+            if not s or s.startswith("SRCLIST|"):
                 continue
             clean = s.replace("**", "")
             if clean.startswith("## "):
@@ -436,11 +497,12 @@ def push_weixin_test(brief: str) -> None:
         r.raise_for_status()
         return r.json()
 
-    # 主通道：客服文本消息（单条上限 2048 字节≈680 汉字；5~15 条动态条数下超长自动拆条续发）
+    # 主通道：客服文本消息（微信单条上限 2048 字节；≤620 汉字的合规晨报应单条发完，
+    # 故分段线设在 1900 字节，只有真超长才拆）
     text = chat_format(brief)
     parts, buf = [], []
     for line in text.split("\n"):
-        if sum(len(b.encode("utf-8")) for b in buf) + len(line.encode("utf-8")) > 900:
+        if sum(len(b.encode("utf-8")) for b in buf) + len(line.encode("utf-8")) > 1900:
             if buf:
                 parts.append("\n".join(buf))
             buf = [line]
@@ -519,6 +581,13 @@ def main() -> int:
             lines += [f"- {it.title}（{it.source} {it.ts:%m-%d %H:%M}）" for it in top[1:]]
             lines += ["", "**路标对照**：模型不可用，本版无仪表核对与凝练，详情见 GitHub Actions 日志"]
             brief = "\n".join(lines)
+        # 抽出溯源表（SRCLIST 不进推送，供"详情"功能定位原始新闻全文）
+        m_src = re.search(r"^SRCLIST\|(.+)$", brief, re.M)
+        if m_src:
+            brief = brief[: m_src.start()] + brief[m_src.end():]
+            globals()["_LAST_SRCLIST"] = m_src.group(1)
+        else:
+            globals()["_LAST_SRCLIST"] = ""
 
     print(brief)  # Actions 日志里留全文，推送失败时手机 GitHub App 可查
     if not args.dry_run:
@@ -545,6 +614,7 @@ def main() -> int:
             print("⚠ 未配置任何推送渠道（WEIXIN_* / SERVERCHAN_KEY / MAIL_*），仅打印", file=sys.stderr)
         if pushed and GH_TOKEN:
             post_brief_map(brief, GH_TOKEN)
+            post_brief_detail(ranked, GH_TOKEN, brief)
     return 0
 
 

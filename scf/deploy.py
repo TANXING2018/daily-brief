@@ -34,6 +34,7 @@ ENV_VARS = [
     {"Key": "GH_REPO", "Value": "TANXING2018/daily-brief"},
     {"Key": "GH_ISSUE", "Value": "1"},
     {"Key": "GH_PAT", "Value": GH_PAT},
+    {"Key": "ZHIPU_API_KEY", "Value": os.environ["ZHIPU_KEY"]},
     {"Key": "CF_ACCOUNT", "Value": "ca74f1a198cb665cb9f6ec43d9445638"},
     {"Key": "CF_KV_NS", "Value": "5f9739157f014da59d98ebe2d9c0c717"},
     {"Key": "CF_TOKEN", "Value": CF_TOKEN},
@@ -123,39 +124,11 @@ def main():
 
     wait_active(scf)
     print("函数状态: Active")
-
-    # 3) 函数 URL（API 网关已停售，官方替代=函数 URL，免网关直连）
-    #    先查已有 URL 触发器，没有则创建（公网无鉴权）
-    triggers = call(scf, scf_models.ListTriggersRequest, {
-        "FunctionName": FUNC_NAME, "Limit": 100})
-    url_trig = None
-    for t in (triggers.Triggers or []):
-        if t.Type == "url":
-            url_trig = t
-            break
-    if not url_trig:
-        call(scf, scf_models.CreateTriggerRequest, {
-            "FunctionName": FUNC_NAME,
-            "TriggerName": "url",
-            "Type": "url",
-            "TriggerDesc": json.dumps({"AuthType": "NONE"}),
-            "Enable": "OPEN",
-            "Description": "微信回调入口"})
-        time.sleep(3)
-        triggers = call(scf, scf_models.ListTriggersRequest, {
-            "FunctionName": FUNC_NAME, "Limit": 100})
-        url_trig = next(t for t in triggers.Triggers if t.Type == "url")
-        print("函数 URL 触发器已创建")
-    detail = url_trig.Detail or "{}"
-    print("触发器详情:", detail[:200])
-    d = json.loads(detail) if isinstance(detail, str) else detail
-    url = d.get("Url") or d.get("url") or str(detail)
-    print("微信回调 URL:", f"{url.rstrip('/')}/wx")
-    print("诊断 URL:", f"{url.rstrip('/')}/wx-diag")
+    print("（函数 URL 已在控制台开启，地址不变：https://1492481560-j897ak9n7b.ap-guangzhou.tencentscf.com/wx）")
 
 
-def _unused_apigateway():
-    """API 网关 2025-06 已停售（官方公告 product/628/106651），保留代码仅作参考。"""
+def _unused():
+    """API 网关 2025-06 停售、函数 URL 无公开 API（控制台管理）——历史尝试代码已删。"""
     return
 
 
