@@ -261,6 +261,7 @@ async function handle(msg) {
     if (mode === "detail") {
       try {
         const detail = await fetchBriefDetail(text);
+        console.log(`diag: detail分支 存档=${detail ? detail.length : "null"}字 providers=${LLM_PROVIDERS.length}`);
         if (!detail) {
           await say(`没找到今天晨报第 ${text} 条的存档（详情数据自 2026-10-18 起生成）。`);
           return;
@@ -268,10 +269,11 @@ async function handle(msg) {
         await say("正在解读，约需几秒…");
         const headline = detail.split("\n")[0].slice(0, 50);
         const explain = await zhipuExplain(detail, headline);
+        console.log(`diag: 解读完成 ${explain.length}字`);
         await say(`📄 第 ${text} 条 · ${headline}\n\n${explain}`);
       } catch (e) {
         console.error("detail:", e);
-        await say(`详情功能出错了：${String(e && e.message || e).slice(0, 120)}\n原始新闻：\n${(await fetchBriefDetail(text).catch(() => "") || "").slice(0, 500)}`);
+        await say(`详情功能出错了：${String(e && e.message || e).slice(0, 120)}`);
       }
       return;
     }
