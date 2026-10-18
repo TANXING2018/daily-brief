@@ -121,7 +121,7 @@ async function wxReplyOne(openid, text) {
 }
 
 // ---- 智谱解读（「详情」功能：新闻全貌+AI分析，标注观点级；多模型降级链防限流）----
-const ZHIPU_MODELS = ["glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"];
+const ZHIPU_MODELS = ["glm-5.3-flash", "glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"];
 async function zhipuExplain(newsText, headline) {
   let lastErr = null;
   for (const model of ZHIPU_MODELS) {

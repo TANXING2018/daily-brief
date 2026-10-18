@@ -25,7 +25,7 @@ NOW = datetime.utcnow() + timedelta(hours=8)
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 SERVERCHAN_KEY = os.environ.get("SERVERCHAN_KEY", "")
 # 免费模型档位随平台改名会失效（2026-10：glm-4-flash 已不存在），按序自动降级
-ZHIPU_MODELS = [m for m in [os.environ.get("ZHIPU_MODEL"), "glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"] if m]
+ZHIPU_MODELS = [m for m in [os.environ.get("ZHIPU_MODEL"), "glm-5.3-flash", "glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"] if m]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROFILE_PATH = os.path.join(HERE, "profile.md")
