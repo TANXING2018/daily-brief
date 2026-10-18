@@ -97,27 +97,34 @@ async function wxReply(openid, text) {
 }
 
 async function wxReplyOne(openid, text) {
-  let token = await kvGet("wx_token");
-  if (!token) {
-    const r = JSON.parse(
-      (await req("GET", `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${WX_APPID}&secret=${WX_SECRET}`)).text,
+  // 最多两轮：缓存的 token 失效（40001/42001）时清缓存并重取重发，杜绝静默丢消息
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let token = await kvGet("wx_token");
+    if (!token) {
+      const r = JSON.parse(
+        (await req("GET", `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${WX_APPID}&secret=${WX_SECRET}`)).text,
+      );
+      token = r.access_token;
+      if (!token) throw new Error("wx token: " + JSON.stringify(r).slice(0, 120));
+      await kvPut("wx_token", token, 7000);
+    }
+    const r = await req(
+      "POST",
+      `https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=${token}`,
+      {
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ touser: openid, msgtype: "text", text: { content: text } }),
+      },
     );
-    token = r.access_token;
-    if (!token) throw new Error("wx token: " + JSON.stringify(r).slice(0, 120));
-    await kvPut("wx_token", token, 7000);
+    const j = JSON.parse(r.text);
+    if (j.errcode === 0) return;
+    if (j.errcode === 40001 || j.errcode === 42001) {
+      await kvDel("wx_token"); // token 失效：清缓存进入下一轮重取
+      continue;
+    }
+    throw new Error("wx send " + JSON.stringify(j).slice(0, 120));
   }
-  const r = await req(
-    "POST",
-    `https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=${token}`,
-    {
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ touser: openid, msgtype: "text", text: { content: text } }),
-    },
-  );
-  const j = JSON.parse(r.text);
-  if (j.errcode === 40001 || j.errcode === 42001) {
-    await kvDel("wx_token"); // 失效则下次重取
-  }
+  throw new Error("wx send: token 两轮均失效");
 }
 
 // ---- 智谱解读（「详情」功能：新闻全貌+AI分析，标注观点级；多模型降级链防限流）----
