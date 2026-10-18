@@ -1,0 +1,81 @@
+{
+  "D:\\workspace2\\AIfinance\\tools\\cloud\\scf\\serverless.yml": {
+    "versionFramework": "4.44.0",
+    "servicePath": "D:\\workspace2\\AIfinance\\tools\\cloud\\scf\\serverless.yml",
+    "serviceConfigFileName": "serverless.yml",
+    "service": {
+      "component": "scf",
+      "name": "daily-brief-feedback",
+      "org": "daily-brief",
+      "app": "daily-brief",
+      "stage": "prod",
+      "inputs": {
+        "src": "./",
+        "handler": "index.main_handler",
+        "runtime": "Nodejs16.13",
+        "memorySize": 256,
+        "timeout": 15,
+        "region": "ap-guangzhou",
+        "description": "微信晨报反馈机器人（消息回调→KV状态→GitHub issue）",
+        "environment": {
+          "variables": {
+            "WX_TOKEN": "<REDACTED>",
+            "WX_APPID": "wx279a10c5972aba69",
+            "WX_SECRET": "<REDACTED>",
+            "GH_REPO": "TANXING2018/daily-brief",
+            "GH_ISSUE": "1",
+            "GH_PAT": "${env:GH_PAT}",
+            "CF_ACCOUNT": "ca74f1a198cb665cb9f6ec43d9445638",
+            "CF_KV_NS": "5f9739157f014da59d98ebe2d9c0c717",
+            "CF_TOKEN": "<REDACTED>"
+          }
+        },
+        "events": [
+          {
+            "apigw": {
+              "name": "daily-brief-feedback-api",
+              "parameters": {
+                "protocols": [
+                  "https"
+                ],
+                "serviceName": "daily-brief-feedback",
+                "description": "微信消息回调入口",
+                "environment": "release",
+                "endpoints": [
+                  {
+                    "path": "/wx",
+                    "method": "ANY",
+                    "serviceScf": {
+                      "isIntegratedResponse": false
+                    }
+                  },
+                  {
+                    "path": "/wx-diag",
+                    "method": "GET",
+                    "serviceScf": {
+                      "isIntegratedResponse": false
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "error": {
+      "message": "You must sign in or use a License Key with Serverless Framework V.4 and later versions: if the user is at the keyboard, run \"serverless login\" (without a terminal it prints a sign-in URL for them to open and waits up to 10 minutes); for unattended runs, set SERVERLESS_ACCESS_KEY (create one at https://app.serverless.com/settings/accessKeys) or SERVERLESS_LICENSE_KEY (create one at https://app.serverless.com/settings/licenseKeys).",
+      "code": "AUTH_REQUIRED"
+    },
+    "serviceRawFile": "# 腾讯云函数部署配置（Serverless Framework）\n# 部署：cd scf && npm i -g serverless && sls deploy\n# 密钥：环境变量 TENCENT_SECRET_ID / TENCENT_SECRET_KEY\n\ncomponent: scf\nname: daily-brief-feedback\norg: daily-brief\napp: daily-brief\nstage: prod\n\ninputs:\n  src: ./\n  handler: index.main_handler\n  runtime: Nodejs16.13\n  memorySize: 256\n  timeout: 15\n  region: ap-guangzhou\n  description: 微信晨报反馈机器人（消息回调→KV状态→GitHub issue）\n  environment:\n    variables:\n      WX_TOKEN: fz2026radar\n      WX_APPID: wx279a10c5972aba69\n      WX_SECRET: ca327e5a70137631a57d20d535cb99a6\n      GH_REPO: TANXING2018/daily-brief\n      GH_ISSUE: \"1\"\n      GH_PAT: ${env:GH_PAT}\n      CF_ACCOUNT: ca74f1a198cb665cb9f6ec43d9445638\n      CF_KV_NS: 5f9739157f014da59d98ebe2d9c0c717\n      CF_TOKEN: ${env:CF_TOKEN}\n  events:\n    - apigw:\n        name: daily-brief-feedback-api\n        parameters:\n          protocols:\n            - https\n          serviceName: daily-brief-feedback\n          description: 微信消息回调入口\n          environment: release\n          endpoints:\n            - path: /wx\n              method: ANY\n              serviceScf:\n                isIntegratedResponse: false # 透传：函数返回体直接作为响应\n            - path: /wx-diag\n              method: GET\n              serviceScf:\n                isIntegratedResponse: false\n",
+    "command": [
+      "deploy"
+    ],
+    "options": {},
+    "serviceProviderAwsCfStackId": null,
+    "serviceProviderAwsCfStackCreated": null,
+    "serviceProviderAwsCfStackUpdated": null,
+    "serviceProviderAwsCfStackStatus": null,
+    "serviceProviderAwsCfStackOutputs": null
+  }
+}
