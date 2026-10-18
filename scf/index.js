@@ -25,8 +25,15 @@ const CF_TOKEN = ENV.CF_TOKEN;
 function req(method, url, { headers = {}, body = null } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
+    // 微信/GitHub 等 API 要求显式 Content-Length（chunked 会被甩空响应）
+    const h = { ...headers };
+    let payload = body;
+    if (body != null) {
+      payload = Buffer.from(body, "utf8");
+      if (!h["Content-Length"]) h["Content-Length"] = payload.length;
+    }
     const r = https.request(
-      { hostname: u.hostname, path: u.pathname + u.search, method, headers, timeout: 15000 },
+      { hostname: u.hostname, path: u.pathname + u.search, method, headers: h, timeout: 15000 },
       (res) => {
         let data = "";
         res.on("data", (c) => (data += c));
@@ -35,7 +42,7 @@ function req(method, url, { headers = {}, body = null } = {}) {
     );
     r.on("error", reject);
     r.on("timeout", () => r.destroy(new Error("timeout")));
-    if (body) r.write(body);
+    if (payload) r.write(payload);
     r.end();
   });
 }
@@ -116,7 +123,13 @@ async function wxReplyOne(openid, text) {
         body: JSON.stringify({ touser: openid, msgtype: "text", text: { content: text } }),
       },
     );
-    const j = JSON.parse(r.text);
+    let j;
+    try {
+      j = JSON.parse(r.text);
+    } catch (e) {
+      console.error(`wx send 响应异常 status=${r.status} body=[${(r.text || "").slice(0, 100)}]`);
+      j = { errcode: -1, errmsg: "bad response" };
+    }
     if (j.errcode === 0) return;
     if (j.errcode === 40001 || j.errcode === 42001) {
       await kvDel("wx_token"); // token 失效：清缓存进入下一轮重取
