@@ -120,25 +120,36 @@ async function wxReplyOne(openid, text) {
   }
 }
 
-// ---- 智谱解读（「详情」功能：新闻全貌+AI分析，标注观点级）----
+// ---- 智谱解读（「详情」功能：新闻全貌+AI分析，标注观点级；多模型降级链防限流）----
+const ZHIPU_MODELS = ["glm-4.7-flash", "glm-4.5-flash", "glm-4-flash-250414"];
 async function zhipuExplain(newsText, headline) {
-  const body = JSON.stringify({
-    model: "glm-4.5-flash",
-    temperature: 0.4,
-    messages: [
-      { role: "system", content: "你是个人金融新闻编辑。解读只陈列事实与分析线索，绝不输出投资建议或收益承诺；判断部分必须标注为分析观点。" },
-      { role: "user", content: `用户是宏观/黄金/AI资本开支的个人研究者，关注：美国通胀与加息路径、长端利率、黄金定价、AI资本开支融资结构、欧美债务。请对下面这条晨报新闻做详细说明，输出三段（总长≤550汉字，语言通俗，术语用大白话解释）：\n①事件全貌（时间/主体/关键数字）\n②背景（为什么重要，尽量挂到上述用户关注的主线）\n③分析与观察点（开头标注「分析·观点」：可能的影响、后续该盯什么）\n\n晨报条目标题：${headline}\n原始新闻全文：\n${newsText}` },
-    ],
-  });
-  const r = await req("POST", "https://open.bigmodel.cn/api/paas/v4/chat/completions", {
-    headers: { Authorization: `Bearer ${ZHIPU_KEY}`, "Content-Type": "application/json; charset=utf-8", "User-Agent": "daily-brief-scf" },
-    body,
-  });
-  if (r.status !== 200) throw new Error(`zhipu ${r.status}: ${r.text.slice(0, 150)}`);
-  const j = JSON.parse(r.text);
-  const content = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-  if (!content) throw new Error("zhipu 空回复: " + r.text.slice(0, 120));
-  return content.trim();
+  let lastErr = null;
+  for (const model of ZHIPU_MODELS) {
+    try {
+      const body = JSON.stringify({
+        model,
+        temperature: 0.4,
+        messages: [
+          { role: "system", content: "你是个人金融新闻编辑。解读只陈列事实与分析线索，绝不输出投资建议或收益承诺；判断部分必须标注为分析观点。" },
+          { role: "user", content: `用户是宏观/黄金/AI资本开支的个人研究者，关注：美国通胀与加息路径、长端利率、黄金定价、AI资本开支融资结构、欧美债务。请对下面这条晨报新闻做详细说明，输出三段（总长≤550汉字，语言通俗，术语用大白话解释）：\n①事件全貌（时间/主体/关键数字）\n②背景（为什么重要，尽量挂到上述用户关注的主线）\n③分析与观察点（开头标注「分析·观点」：可能的影响、后续该盯什么）\n\n晨报条目标题：${headline}\n原始新闻全文：\n${newsText}` },
+        ],
+      });
+      const r = await req("POST", "https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+        headers: { Authorization: `Bearer ${ZHIPU_KEY}`, "Content-Type": "application/json; charset=utf-8", "User-Agent": "daily-brief-scf" },
+        body,
+      });
+      if (r.status === 429 || r.status === 503) throw new Error(`zhipu ${r.status}`);
+      if (r.status !== 200) throw new Error(`zhipu ${r.status}: ${r.text.slice(0, 120)}`);
+      const j = JSON.parse(r.text);
+      const content = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+      if (!content) throw new Error("zhipu 空回复");
+      return content.trim();
+    } catch (e) {
+      lastErr = e;
+      console.error(`zhipu [${model}] 失败:`, e && e.message);
+    }
+  }
+  throw lastErr || new Error("zhipu 全部失败");
 }
 
 // 拉取当日 BRIEF-D（详情数据）第 idx 条

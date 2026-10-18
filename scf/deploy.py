@@ -104,7 +104,7 @@ def main():
             "Handler": "index.main_handler",
             "Code": {"ZipFile": zip_b64},
             "MemorySize": 256,
-            "Timeout": 15,
+            "Timeout": 60,
             "Environment": {"Variables": ENV_VARS},
             "Description": "微信晨报反馈机器人",
         })
@@ -117,7 +117,7 @@ def main():
             wait_active(scf)
             call(scf, scf_models.UpdateFunctionConfigurationRequest, {
                 "FunctionName": FUNC_NAME,
-                "Environment": {"Variables": ENV_VARS}, "Timeout": 15})
+                "Environment": {"Variables": ENV_VARS}, "Timeout": 60})
             print("函数已更新")
         else:
             raise

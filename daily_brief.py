@@ -192,6 +192,33 @@ def gauges() -> str:
     return "\n".join(lines)
 
 
+def sanitize_brief(brief: str) -> str:
+    """模型输出的机械护栏（2026-10-18 老模型崩坏实录：条数失控/重复/抄指令）：
+    行级去重（含近似）、次条超 15 截断、剔除指令泄漏行。不依赖模型自觉。"""
+    lines = brief.split("\n")
+    out, seen, sub_count, in_sub = [], set(), 0, False
+    LEAK = ("仅当有路标触发", "且只列异常项", "SRCLIST", "按画像第", "此行必须输出")
+    for ln in lines:
+        s = ln.strip()
+        key = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", s)[:20]
+        if s.startswith(("**次条**", "次条")):
+            in_sub = True
+        elif s.startswith(("**路标对照**", "🎯", "路标对照")):
+            in_sub = False
+        if in_sub and s[:2] in ("- ", "· ", "* ") and key:
+            sub_count += 1
+            if sub_count > 15:
+                continue  # 超上限直接丢
+        if key and key in seen and len(key) >= 8:
+            continue  # 重复/近似重复行去重
+        if any(k in s for k in LEAK):
+            continue  # 指令泄漏行
+        if key and len(key) >= 8:
+            seen.add(key)
+        out.append(ln)
+    return "\n".join(out)
+
+
 def build_prompt(ranked: list[Item], gauge_text: str, feedback_hints: str = "") -> str:
     profile = open(PROFILE_PATH, encoding="utf-8").read()
     listing = []
@@ -345,12 +372,21 @@ def post_brief_detail(ranked: list, token: str, brief: str = "") -> None:
                 key = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", title)[:15]
                 if len(key) < 6:
                     continue
-                best = None
+                # 宽松匹配：先子串包含，再 2-gram 重合度打分（模型常改写标题，精确匹配会漏）
+                def grams(s):
+                    return {s[i:i+2] for i in range(len(s) - 1)} if len(s) >= 2 else {s}
+                kg = grams(key)
+                best, best_score = None, 0
                 for it in ranked:
-                    hay = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", it.title + it.body)
-                    if key in hay and (best is None or len(it.body) > len(best.body)):
-                        best = it
-                if best is not None:
+                    hay = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", it.title + it.body[:150])
+                    if key in hay:
+                        score = 999  # 子串命中优先
+                    else:
+                        overlap = len(kg & grams(hay))
+                        score = overlap / max(len(kg), 1)
+                    if score > best_score:
+                        best, best_score = it, score
+                if best is not None and best_score >= 0.3:
                     link = f" {best.url}" if best.url else ""
                     entries.append(f"{idx}={best.title}\n{best.body[:400]}（{best.source} {best.ts:%m-%d %H:%M}）{link}")
         if entries:
@@ -589,6 +625,7 @@ def main() -> int:
             globals()["_LAST_SRCLIST"] = m_src.group(1)
         else:
             globals()["_LAST_SRCLIST"] = ""
+        brief = sanitize_brief(brief)
 
     print(brief)  # Actions 日志里留全文，推送失败时手机 GitHub App 可查
     if not args.dry_run:
