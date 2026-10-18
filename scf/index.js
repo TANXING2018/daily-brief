@@ -200,8 +200,10 @@ async function fetchBriefDetail(idx) {
   const comments = JSON.parse(r.text);
   let latest = null;
   for (const c of comments) if (typeof c.body === "string" && c.body.startsWith("BRIEF-D|")) latest = c.body;
+  console.log(`diag: 评论${comments.length}条 BRIEF-D${latest ? "命中" : "未命中"} 长度${latest ? latest.length : 0}`);
   if (!latest) return null;
   const segs = latest.split("‖");
+  console.log(`diag: 分段${segs.length} 首段[${segs[0].slice(0, 30)}]`);
   for (const seg of segs) {
     const m = seg.match(new RegExp(`^${idx}=`));
     if (m) return seg.slice(m[0].length);
@@ -210,6 +212,7 @@ async function fetchBriefDetail(idx) {
       if (mm) return seg.slice(mm[0].length);
     }
   }
+  console.log(`diag: 未匹配到 ${idx}=，段首列表 ${segs.map((s) => s.slice(0, 6)).join(" / ")}`);
   return null;
 }
 
