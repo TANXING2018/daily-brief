@@ -322,7 +322,7 @@ def feedback_issue(token: str) -> int:
 
 
 def post_brief_map(brief: str, token: str) -> None:
-    """推送成功后把当日编号→标题映射写进反馈 issue（供编号反馈定位新闻）。"""
+    """推送成功后把当日编号→标题映射+晨报全文写进反馈 issue（全文供48h外兜底卡片的跳转页阅读）。"""
     try:
         n = feedback_issue(token)
         entries = []
@@ -334,9 +334,10 @@ def post_brief_map(brief: str, token: str) -> None:
             s = line.strip()
             if s[:2] in ("- ", "· ", "* "):
                 entries.append(f"{len(entries)}={strip_src_lite(s.lstrip('-·* '))[:50]}")
+        plain = re.sub(r"\*\*|##|^\s*[-*]\s*", "", brief, flags=re.M).strip()
         _gh("POST", f"/repos/{GH_REPO}/issues/{n}/comments", token,
-            {"body": f"BRIEF|{NOW:%Y-%m-%d}|" + "|".join(entries)})
-        print(f"已写当日编号映射到 issue #{n}")
+            {"body": f"BRIEF|{NOW:%Y-%m-%d}|" + "|".join(entries) + "\n\n---\n" + f"BRIEF-FULL|{NOW:%Y-%m-%d}|\n{plain}"})
+        print(f"已写当日编号映射+全文到 issue #{n}")
     except Exception as e:
         print(f"⚠ 编号映射写入失败（不影响晨报）：{type(e).__name__} {str(e)[:80]}", file=sys.stderr)
 
@@ -583,7 +584,7 @@ def push_weixin_test(brief: str) -> None:
         {
             "touser": openid,
             "template_id": tpl,
-            "url": "https://github.com/TANXING2018/daily-brief/actions",
+            "url": "https://github.com/TANXING2018/daily-brief/issues/1",  # 48h 窗口外的兜底卡片：跳反馈页可见晨报全文（BRIEF-FULL）
             "data": {
                 "title": {"value": f"📡 {headline[:60]}"},
                 "content": {"value": content or "今日无增量（点击查看全文）"},
