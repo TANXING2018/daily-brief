@@ -42,6 +42,11 @@ PROFILE_PATH = os.path.join(HERE, "profile.md")
 # 行情播报/产品新闻交给 LLM 的增量性维度自然压低。
 
 TIER1 = {
+    # 中国政策主线（2026-11-04 补：politics 定调——政策对半月~三个月市场影响大）
+    "政治局", "中央经济工作会议", "国常会", "人大常委会", "十五五", "五年规划", "全国两会",
+    # 资本市场稳市工具（2026-11-04 补：SFISF 第三批 1000 亿/回购增持再贷款降至 1%，制度化安排）
+    "互换便利", "SFISF", "回购增持再贷款", "平准基金", "汇金", "稳定资本市场",
+    # 美欧宏观与危机线
     "黄金", "金价", "央行购金",
     "意德利差", "BTP",
     "甲骨文", "CDS", "信用利差", "高收益债",
@@ -51,6 +56,10 @@ TIER1 = {
     "逆回购", "RRP",
 }
 TIER2 = {
+    # 中国政策与监管（2026-11-04 补；宽召回原则，"美国财政部"类误命中交给 LLM 分辨）
+    "证监会", "发改委", "工信部", "中国人民银行", "中国央行", "货币政策", "降准", "LPR",
+    "专项债", "产业政策", "部委", "国资委", "网信办", "金监总局", "化债", "财政部", "国务院",
+    # 美欧宏观
     "通胀", "CPI", "PCE", "加息", "降息", "利率决议", "美联储", "联储", "鲍威尔",
     "美债", "国债", "收益率曲线", "实际利率",
     "债务", "赤字", "违约", "衰退", "银行", "金融危机", "商业地产", "硅谷银行",
@@ -65,6 +74,14 @@ TIER3 = {
     "标普", "道指", "纳指", "美股", "股市", "原油", "油价", "比特币", "加密",
     "GDP", "就业", "非农", "失业率", "PMI", "中国经济", "中国央行",
     "IMF", "世界银行", "G20", "G7",
+    # 宏观数据验证面（政策效果闭环）
+    "社融", "信贷", "M1", "M2",
+    # 房地产与地方债执行
+    "房地产", "楼市", "商品房", "城投",
+    # 中美博弈（AI 链命门，观察档）
+    "出口管制", "实体清单", "关税", "制裁",
+    # 存储与资金面（观察档）
+    "NAND", "DRAM", "存储价格", "两融", "北向资金",
 }
 BLACKLIST = re.compile(
     r"娱乐|体育|明星|球队|联赛|彩票|游戏|手游|直播|带货|综艺|电影|电视剧|演唱会"
@@ -150,6 +167,24 @@ def fetch_and_rank(hours: float = 36.0, limit: int = 40) -> list[Item]:
                 b = str(r["内容"]).strip()
                 items.append(Item(b[:40], b, _parse_ts(r["时间"]), "新浪"))
 
+    # 新闻联播（2026-11-04 补）：政策会议第一信号源——快讯三源对政治局/人大常委会/
+    # 国常会级新闻覆盖稀薄，联播是此类新闻的稳定一手载体。NOW 已是北京时间。
+    try:
+        for days_back in range(1, 4):
+            d = (NOW - timedelta(days=days_back)).strftime("%Y%m%d")
+            try:
+                df = ak.news_cctv(date=d)
+            except Exception:
+                continue
+            if df is None or len(df) == 0:
+                continue
+            for _, r in df.iterrows():
+                title = str(r.get("title") or "").strip()
+                body = str(r.get("content") or "").strip()
+                items.append(Item(title, body, _parse_ts(f"{d[:4]}-{d[4:6]}-{d[6:]} 20:00:00"), "新闻联播"))
+    except Exception as e:
+        src_status.append(f"新闻联播源不可用({type(e).__name__})")
+
     for msg in src_status:
         print(f"⚠ {msg}", file=sys.stderr)
 
@@ -227,9 +262,32 @@ def sanitize_brief(brief: str) -> str:
 
 def build_prompt(ranked: list[Item], gauge_text: str, feedback_hints: str = "") -> str:
     profile = open(PROFILE_PATH, encoding="utf-8").read()
+
+    # 当下人气榜（2026-11-04 补，2026-11-04 晚升级：从"附页"升级为"选择信号"）：
+    # 散户讨论热度的机器可读代理——快讯源告诉你"发生了什么"，人气榜告诉你"大家在讨论什么"。
+    # 热榜与新闻的影响力和时效性强相关：候选命中热榜主题 = 市场正在讨论的直接证据。
+    heat_names, heat_lines = [], []
+    try:
+        df = ak.stock_hot_rank_em()
+        for _, r in df.head(15).iterrows():
+            nm = str(r["股票名称"]).strip()
+            if nm:
+                heat_names.append(nm)
+                heat_lines.append(f"{nm}({r['代码']}) 涨跌 {float(r['涨跌幅']):+.1f}%")
+    except Exception:
+        pass
+
     listing = []
     for it in ranked:
-        listing.append(f"[{it.score}分] {it.title}\n  {it.body[:180]}\n  ({it.ts:%m-%d %H:%M} · {it.source} · 命中:{'/'.join(it.hits[:6])})")
+        text = it.title + " " + it.body
+        flag = "🔥" if any(nm and nm in text for nm in heat_names) else ""
+        listing.append(f"[{it.score}分]{flag} {it.title}\n  {it.body[:180]}\n  ({it.ts:%m-%d %H:%M} · {it.source} · 命中:{'/'.join(it.hits[:6])})")
+
+    heat_text = ("# 🔥 当下人气榜（东财 top15）\n" + "、".join(heat_lines)
+                 + "\n\n**清单中带 🔥 的条目 = 与人气榜主题重合，是市场正在讨论的直接证据，"
+                   "其重要性分应显著上调（热榜与新闻影响力和时效性强相关）。**") if heat_lines else ""
+    heat_block = ("\n" + heat_text + "\n") if heat_text else ""
+
     return f"""# 我的筛选画像（打分制标准、路标表、输出格式——严格遵循）
 
 {profile}
@@ -241,16 +299,18 @@ def build_prompt(ranked: list[Item], gauge_text: str, feedback_hints: str = "") 
 # 路标仪表（工具实测，行情数字以这里为准、快讯口径须标注）
 
 {gauge_text}
-{(chr(10) + feedback_hints + chr(10)) if feedback_hints else ''}
+{(chr(10) + feedback_hints + chr(10)) if feedback_hints else ''}{heat_block}
 # 任务
 
-今天是 {NOW:%Y-%m-%d}。按画像第一节的打分制处理：对清单逐条打「画像匹配/重要性/增量性」
-三维分，总分=画像×0.5+重要性×0.3+增量×0.2。取总分最高的做一句话头条（≤60字）；
-次条按总分降序**取尽所有合格条目（目标 5~15 条：新闻日多给、安静日少给甚至为零，
-宁缺毋滥）**。**输出硬预算：整份晨报 ≤620 个汉字（微信单条消息上限）——条数多时
-对同主题新闻归纳整合成一条综合快讯（而非逐条罗列），每条尽量 ≤40 字，语言通俗易懂
-（术语换大白话，如"期限溢价"→"买长期债要多给的补偿"）。宁可精编整合，绝不输出长文。**
-全部总分<4 就写"今日无增量，路标无触发"。
+今天是 {NOW:%Y-%m-%d}。按画像第一节的**方向门控制**处理：先判每条新闻属于哪个方向档
+（核心 1.0 / 次要 0.8 / 背景 0.65，档位清单见画像第一节），再打「重要性/增量性」各
+1-10 分，影响分=重要性×0.6+增量×0.4，**出现分=方向权重×影响分，收录阈值 4.5**
+（等效影响力门槛：核心≥5、次要≥6、背景≥7——背景方向的普通新闻直接不出现）。
+先对照画像第七节「政治日历」：候选新闻若与未来 90 天事件相关，重要性分上调 1-2 分，头条可提示「临近X事件」；然后取出现分最高的做一句话头条（≤60字）；次条按出现分降序**取尽所有合格条目（目标 5~15 条：
+新闻日多给、安静日少给甚至为零，宁缺毋滥）**。**输出硬预算：整份晨报 ≤620 个汉字
+（微信单条消息上限）——条数多时对同主题新闻归纳整合成一条综合快讯（而非逐条罗列），
+每条尽量 ≤40 字，语言通俗易懂（术语换大白话，如"期限溢价"→"买长期债要多给的补偿"）。
+宁可精编整合，绝不输出长文。**全部出现分<4.5 就写"今日无增量，路标无触发"。
 铁律：新闻=线索不是证据；观点级标"观点"且不进头条；跨源完全重复合并为一条并标"多源"；
 **路标对照板块默认省略，仅当有路标触发（标⚠）或明显逼近阈值时才输出，且只列异常项**。
 **不要输出分数本身**，只按画像第五节格式输出晨报。**
