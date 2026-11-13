@@ -146,10 +146,40 @@ def fetch_and_rank(hours: float = 36.0, limit: int = 40) -> list[Item]:
             items.append(Item(str(r[t_col]), str(r[b_col]), ts_fn(r), src))
 
     src_status = []
+
+    def _hithink_flash() -> "pd.DataFrame":
+        """同花顺金融数据API快讯（2026-11-14 加：官方第四源，防止三源同灭）。
+
+        Key 在 repo secret HITHINK_FINANCE_API_KEY；未配置时抛错由外层降级。
+        """
+        import os as _os
+        import pandas as _pd
+        key = _os.environ.get("HITHINK_FINANCE_API_KEY", "").strip()
+        if not key:
+            raise RuntimeError("HITHINK_FINANCE_API_KEY未配置")
+        r = requests.get("https://fuyao.aicubes.cn/api/news/flash/list",
+                         headers={"X-api-key": key},
+                         params={"tag_id": 21103, "seq": "0"}, timeout=20)
+        r.raise_for_status()
+        d = r.json()
+        if d.get("code") != 0:
+            raise RuntimeError(f"同花顺API code={d.get('code')}")
+        items_ = (d.get("data") or {}).get("items") or []
+        rows = []
+        for it in items_:
+            ts_ms = it.get("create_time_ms")
+            # runner 本地是 UTC：fromtimestamp 给 UTC，+8h 转北京时间，与快讯三源口径一致
+            ts = datetime.fromtimestamp((ts_ms or 0) / 1000) + timedelta(hours=8)
+            rows.append({"标题": str(it.get("title") or ""),
+                         "内容": str(it.get("summary") or ""),
+                         "时间": ts})
+        return _pd.DataFrame(rows)
+
     for name, loader in [
         ("东财", lambda: ak.stock_info_global_em()),
         ("财联社", lambda: ak.stock_info_global_cls()),
         ("新浪", lambda: ak.stock_info_global_sina()),
+        ("同花顺", _hithink_flash),
     ]:
         try:
             df = loader()
@@ -166,6 +196,10 @@ def fetch_and_rank(hours: float = 36.0, limit: int = 40) -> list[Item]:
                 rows.append((t, str(r.get("内容") or ""), f"{r['发布日期']} {r['发布时间']}", "财联社"))
             for t, b, ts, s in rows:
                 items.append(Item(t, b, _parse_ts(ts), s))
+        elif name == "同花顺":
+            for _, r in df.iterrows():
+                b = str(r["内容"]).strip()
+                items.append(Item(str(r["标题"]) or b[:40], b, r["时间"], "同花顺"))
         else:
             for _, r in df.iterrows():
                 b = str(r["内容"]).strip()
